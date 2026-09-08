@@ -55,7 +55,8 @@ quickest answer to "why is it talking to the wrong server?". It makes no network
 shows a `password_ref` (a pointer) but never a password.
 
 The file must never contain a password — only `password_ref`, and the CLI refuses a `password` key
-outright. The equivalent environment variables are `TERMINUS_URL`, `TERMINUS_EMAIL`,
+outright. Use the 1Password item's UUID in the reference rather than its title: `op` rejects titles
+containing brackets or parentheses. The equivalent environment variables are `TERMINUS_URL`, `TERMINUS_EMAIL`,
 `TERMINUS_PASSWORD_REF`, `TERMINUS_SCREENS_DIR`, and `TERMINUS_PASSWORD` as a fallback for CI or a
 machine without the 1Password CLI.
 
