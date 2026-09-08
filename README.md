@@ -67,3 +67,7 @@ never shells out, and it never enters the environment. The access token is cache
 npm run typecheck
 npm run test
 ```
+
+## Licence
+
+[MIT](LICENSE).
