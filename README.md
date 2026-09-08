@@ -45,7 +45,7 @@ the working directory:
 Put that file in the repo whose screens this CLI pushes, and commit it. Paths inside it resolve
 against **the file**, not the working directory, so `"screens": "screens"` means the same directory
 whether the command runs from that repo's root, from a subdirectory, or from a launchd timer with
-no meaningful cwd. That matters because `ext push` sends whatever it reads to a panel on a wall,
+no meaningful cwd. That matters because `ext push` sends whatever it reads to a live display,
 and a bare `./screens` would quietly pick up whichever folder of that name happened to be
 underfoot. An unknown key in the file is an error rather than being ignored, so a typo cannot
 silently leave a default in place.
