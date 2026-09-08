@@ -17,14 +17,26 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import type { LoginResponse } from "./types.ts";
 
 export const USER_AGENT = "terminus-cli/0.0.0";
 
-/** Where the access token is cached. Under `build/`, which is git-ignored. */
-export const DEFAULT_TOKEN_CACHE = "build/.terminus-token.json";
+/**
+ * Where the access token is cached: a per-user state directory, never the working tree.
+ *
+ * The CLI is run from whichever repo holds the screens it pushes, and a repo-relative path would
+ * put a live bearer token inside that repo, where nothing git-ignores it.
+ */
+export function defaultTokenCachePath(env: NodeJS.ProcessEnv = process.env): string {
+  const stateHome = env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+  return join(stateHome, "terminus-cli", "token.json");
+}
+
+/** How long to wait for `op read` before giving up, in milliseconds. */
+const OP_READ_TIMEOUT_MS = 10_000;
 
 /** Re-login this many seconds before the token actually expires. */
 const EXPIRY_MARGIN_SECONDS = 60;
@@ -143,7 +155,8 @@ export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configRef?
   const direct = env.TERMINUS_PASSWORD;
   if (direct) return direct;
 
-  const ref = env.TERMINUS_PASSWORD_REF ?? configRef;
+  // An empty variable counts as unset, so it cannot shadow a `password_ref` in the config file.
+  const ref = env.TERMINUS_PASSWORD_REF || configRef;
   if (!ref) {
     throw new Error(
       "No password source. Set TERMINUS_PASSWORD_REF (an op:// reference), or password_ref in " +
@@ -151,7 +164,8 @@ export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configRef?
     );
   }
 
-  const result = spawnSync("op", ["read", ref], { encoding: "utf8" });
+  // Bounded: with no TTY (launchd, cron) an `op` prompt would otherwise hang forever.
+  const result = spawnSync("op", ["read", ref], { encoding: "utf8", timeout: OP_READ_TIMEOUT_MS });
   if (result.error) {
     throw new Error(`Could not run \`op read\` to resolve TERMINUS_PASSWORD_REF: ${result.error.message}`);
   }
@@ -196,7 +210,7 @@ export interface ClientOptions {
   email: string;
   /** Called only when a fresh login is actually needed, so a cache hit never shells out to `op`. */
   password: () => string;
-  /** Absolute or repo-relative path, or null to disable the on-disk cache entirely. */
+  /** Absolute path, or null to disable the on-disk cache entirely. Defaults to `defaultTokenCachePath()`. */
   tokenCachePath?: string | null;
   fetch?: typeof globalThis.fetch;
   /** Log method, path and status to stderr. Never logs credentials or tokens. */
@@ -222,13 +236,15 @@ export class TerminusClient {
   #fetch: typeof globalThis.fetch;
   #verbose: boolean;
   #token: string | null = null;
+  /** True when the current token came from this process's own login, so a 401 is final. */
+  #tokenIsFresh = false;
 
   constructor(options: ClientOptions) {
     this.url = options.url.replace(/\/$/, "");
     this.email = options.email;
     this.#password = options.password;
     this.#tokenCachePath =
-      options.tokenCachePath === undefined ? DEFAULT_TOKEN_CACHE : options.tokenCachePath;
+      options.tokenCachePath === undefined ? defaultTokenCachePath() : options.tokenCachePath;
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#verbose = options.verbose ?? false;
   }
@@ -245,13 +261,37 @@ export class TerminusClient {
     const cached = this.#readCachedToken();
     if (cached && tokenIsUsable(cached)) {
       this.#token = cached;
+      this.#tokenIsFresh = false;
       return cached;
     }
 
+    return this.#refreshToken();
+  }
+
+  async #refreshToken(): Promise<string> {
     const token = await this.#login();
     this.#token = token;
+    this.#tokenIsFresh = true;
     this.#writeCachedToken(token);
     return token;
+  }
+
+  /**
+   * Forget a token the server has rejected, in memory and on disk.
+   *
+   * A token can be unexpired by its own `exp` claim and still be dead: the server's JWT secret
+   * rotated, or Terminus was reinstalled. Without this every command would keep replaying the
+   * rejected token until it expired.
+   */
+  #evictToken(): void {
+    this.#token = null;
+    const file = this.#cacheFile();
+    if (!file) return;
+    try {
+      unlinkSync(file);
+    } catch {
+      // Already gone, or unwritable; either way the in-memory token is cleared.
+    }
   }
 
   /** Perform the request, turning a connection failure into an error that names the URL. */
@@ -298,7 +338,7 @@ export class TerminusClient {
       const cached = JSON.parse(readFileSync(file, "utf8")) as Partial<CachedToken>;
       // A cache entry is only good for the server and account it was minted against.
       if (cached.url !== this.url || cached.email !== this.email) return null;
-      return cached.access_token ?? null;
+      return typeof cached.access_token === "string" && cached.access_token ? cached.access_token : null;
     } catch {
       return null;
     }
@@ -311,6 +351,8 @@ export class TerminusClient {
     try {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(entry, null, 2)}\n`, { mode: 0o600 });
+      // `mode` only applies when the file is created; an existing looser file keeps its mode.
+      chmodSync(file, 0o600);
     } catch {
       // A cache is an optimisation; failing to write one must not fail the command.
     }
@@ -320,9 +362,21 @@ export class TerminusClient {
     if (this.#verbose) process.stderr.write(`${method} ${path} -> ${status}\n`);
   }
 
-  /** An authenticated request with the cookie jar wired in. Callers handle the response. */
+  /**
+   * An authenticated request with the cookie jar wired in. Callers handle the response.
+   *
+   * A 401 against a cached token evicts it and retries once with a fresh login. A 401 against a
+   * token this process just obtained is returned as-is: logging in again would not change it.
+   */
   async request(method: string, path: string, init: RequestInit = {}): Promise<Response> {
-    const token = await this.accessToken();
+    const response = await this.#authenticated(method, path, init, await this.accessToken());
+    if (response.status !== 401 || this.#tokenIsFresh) return response;
+
+    this.#evictToken();
+    return this.#authenticated(method, path, init, await this.#refreshToken());
+  }
+
+  async #authenticated(method: string, path: string, init: RequestInit, token: string): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${token}`);
     headers.set("User-Agent", USER_AGENT);

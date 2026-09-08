@@ -60,8 +60,10 @@ outright. The equivalent environment variables are `TERMINUS_URL`, `TERMINUS_EMA
 machine without the 1Password CLI.
 
 The password is resolved with `op read` only when a login is actually needed, so a cached token
-never shells out, and it never enters the environment. The access token is cached in
-`build/.terminus-token.json` (mode 0600, git-ignored) and reused until a minute before it expires.
+never shells out, and it never enters the environment. The access token is cached per user in
+`$XDG_STATE_HOME/terminus-cli/token.json` (default `~/.local/state/terminus-cli/token.json`, mode
+0600), never inside the working tree, and reused until a minute before it expires. A cached token
+the server rejects is discarded and replaced by one fresh login.
 
 ```sh
 npm run typecheck

@@ -157,26 +157,28 @@ export function resolveSettings(
   config: Config,
   cwd: string = process.cwd(),
 ): Settings {
+  // An empty variable is unset. `FOO=` in a shell profile must not shadow the config file.
+  const envValue = (name: string): string | undefined => env[name] || undefined;
   const fromCwd = (path: string | undefined): string | undefined =>
     path === undefined ? undefined : isAbsolute(path) ? path : resolve(cwd, path);
 
   const [url, urlSource] = pick([
     [flags.url, "--url"],
-    [env.TERMINUS_URL, "TERMINUS_URL"],
+    [envValue("TERMINUS_URL"), "TERMINUS_URL"],
     [config.url, CONFIG_FILENAME],
   ]);
   const [email, emailSource] = pick([
     [flags.email, "--email"],
-    [env.TERMINUS_EMAIL, "TERMINUS_EMAIL"],
+    [envValue("TERMINUS_EMAIL"), "TERMINUS_EMAIL"],
     [config.email, CONFIG_FILENAME],
   ]);
   const [screensDir, screensSource] = pick([
     [fromCwd(flags.screens), "--screens"],
-    [fromCwd(env.TERMINUS_SCREENS_DIR), "TERMINUS_SCREENS_DIR"],
+    [fromCwd(envValue("TERMINUS_SCREENS_DIR")), "TERMINUS_SCREENS_DIR"],
     [config.screensDir, CONFIG_FILENAME],
   ]);
   const [passwordRef, refSource] = pick([
-    [env.TERMINUS_PASSWORD_REF, "TERMINUS_PASSWORD_REF"],
+    [envValue("TERMINUS_PASSWORD_REF"), "TERMINUS_PASSWORD_REF"],
     [config.passwordRef, CONFIG_FILENAME],
   ]);
 

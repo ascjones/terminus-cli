@@ -190,6 +190,15 @@ describe("resolveSettings sources", () => {
     });
   });
 
+  it("treats an empty environment variable as unset", () => {
+    const env = { TERMINUS_URL: "", TERMINUS_EMAIL: "", TERMINUS_PASSWORD_REF: "", TERMINUS_SCREENS_DIR: "" };
+    const settings = resolveSettings(noFlags, env, config, "/cwd");
+    expect(settings.url).toBe(config.url);
+    expect(settings.passwordRef).toBe(config.passwordRef);
+    expect(settings.screensDir).toBe(config.screensDir);
+    expect(settings.sources.password).toBe(CONFIG_FILENAME);
+  });
+
   it("agrees with resolvePassword that a literal beats a reference", () => {
     // These two apply the same precedence rule in different places; this pins them together.
     const env = { TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://Vault/item/password" };

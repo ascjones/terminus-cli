@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   connectionDetail,
   CookieJar,
   TerminusClient,
   TerminusError,
+  defaultTokenCachePath,
   extractCsrfToken,
   jwtExpiry,
   problemStatus,
@@ -48,19 +52,26 @@ function loginResponse(token: string): Response {
   });
 }
 
-function client(responses: Response[]) {
+function client(responses: Response[], options: { tokenCachePath?: string | null; email?: string } = {}) {
   const { fetch, calls } = stubFetch(responses);
+  let logins = 0;
   return {
     calls,
+    logins: () => logins,
     client: new TerminusClient({
       url: "http://localhost:2300/",
-      email: "a@example.com",
-      password: () => "secret",
-      tokenCachePath: null,
+      email: options.email ?? "a@example.com",
+      password: () => {
+        logins += 1;
+        return "secret";
+      },
+      tokenCachePath: options.tokenCachePath === undefined ? null : options.tokenCachePath,
       fetch,
     }),
   };
 }
+
+const ok = (): Response => new Response(JSON.stringify({ data: [] }), { status: 200 });
 
 describe("CookieJar", () => {
   it("keeps the latest value of each cookie and renders one Cookie header", () => {
@@ -208,7 +219,121 @@ describe("TerminusClient.form", () => {
   });
 });
 
+describe("token cache on disk", () => {
+  const dirs: string[] = [];
+  const cacheFile = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "terminus-cli-cache-"));
+    dirs.push(dir);
+    return join(dir, "nested", "token.json");
+  };
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("defaults to a per-user state directory, never the working tree", () => {
+    expect(defaultTokenCachePath({ XDG_STATE_HOME: "/xdg" })).toBe("/xdg/terminus-cli/token.json");
+    expect(defaultTokenCachePath({ XDG_STATE_HOME: "" })).toMatch(/\.local\/state\/terminus-cli\/token\.json$/);
+    expect(defaultTokenCachePath({})).not.toContain(process.cwd());
+  });
+
+  it("writes the token with mode 0600 and a second client reuses it without logging in", async () => {
+    const file = cacheFile();
+    const token = fakeToken(1800);
+    const first = client([loginResponse(token), ok()], { tokenCachePath: file });
+    await first.client.json("GET", "/api/devices");
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      url: "http://localhost:2300",
+      email: "a@example.com",
+      access_token: token,
+    });
+
+    const second = client([ok()], { tokenCachePath: file });
+    await second.client.json("GET", "/api/devices");
+    expect(second.logins()).toBe(0);
+    expect(second.calls[0]?.headers.get("authorization")).toBe(`Bearer ${token}`);
+  });
+
+  it("tightens the mode of an existing looser cache file", async () => {
+    const file = cacheFile();
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "{}", { mode: 0o644 });
+    expect(statSync(file).mode & 0o777).toBe(0o644);
+    const { client: c } = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file });
+    await c.json("GET", "/api/devices");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("ignores a cache minted for another account, an expired one, or a malformed one", async () => {
+    const file = cacheFile();
+    const other = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file, email: "b@example.com" });
+    await other.client.json("GET", "/api/devices");
+
+    const mismatch = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file });
+    await mismatch.client.json("GET", "/api/devices");
+    expect(mismatch.logins()).toBe(1);
+
+    writeFileSync(file, JSON.stringify({ url: "http://localhost:2300", email: "a@example.com", access_token: fakeToken(-1) }));
+    const expired = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file });
+    await expired.client.json("GET", "/api/devices");
+    expect(expired.logins()).toBe(1);
+
+    writeFileSync(file, JSON.stringify({ url: "http://localhost:2300", email: "a@example.com", access_token: 123 }));
+    const malformed = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file });
+    await malformed.client.json("GET", "/api/devices");
+    expect(malformed.logins()).toBe(1);
+  });
+
+  it("evicts a cached token the server rejects and retries once with a fresh login", async () => {
+    const file = cacheFile();
+    const stale = fakeToken(1800);
+    const fresh = fakeToken(1800);
+    const seed = client([loginResponse(stale), ok()], { tokenCachePath: file });
+    await seed.client.json("GET", "/api/devices");
+
+    const { client: c, calls, logins } = client(
+      [new Response("{}", { status: 401 }), loginResponse(fresh), ok()],
+      { tokenCachePath: file },
+    );
+    await c.json("GET", "/api/devices");
+
+    expect(logins()).toBe(1);
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      "GET http://localhost:2300/api/devices",
+      "POST http://localhost:2300/login",
+      "GET http://localhost:2300/api/devices",
+    ]);
+    expect(calls[2]?.headers.get("authorization")).toBe(`Bearer ${fresh}`);
+    expect(JSON.parse(readFileSync(file, "utf8")).access_token).toBe(fresh);
+  });
+
+  it("does not retry a 401 against a token it just obtained", async () => {
+    const { client: c, calls } = client([loginResponse(fakeToken(1800)), new Response("{}", { status: 401 })]);
+    await expect(c.json("GET", "/api/devices")).rejects.toMatchObject({ status: 401 });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("removes the cache file on eviction even when the re-login fails", async () => {
+    const file = cacheFile();
+    const seed = client([loginResponse(fakeToken(1800)), ok()], { tokenCachePath: file });
+    await seed.client.json("GET", "/api/devices");
+
+    const { client: c } = client(
+      [new Response("{}", { status: 401 }), new Response("nope", { status: 401 })],
+      { tokenCachePath: file },
+    );
+    await expect(c.json("GET", "/api/devices")).rejects.toBeInstanceOf(TerminusError);
+    expect(existsSync(file)).toBe(false);
+  });
+});
+
 describe("resolvePassword", () => {
+  it("treats an empty TERMINUS_PASSWORD_REF as unset so the config reference still applies", () => {
+    // Nothing here runs `op`: the assertion is only that the config ref is the one it would read.
+    expect(() => resolvePassword({ TERMINUS_PASSWORD_REF: "" })).toThrow(/No password source/);
+  });
+
   it("prefers the literal password when one is set, without shelling out", () => {
     expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://x/y/z" })).toBe("literal");
   });
