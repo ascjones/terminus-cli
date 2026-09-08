@@ -3,13 +3,13 @@ import { dirname, isAbsolute, resolve } from "node:path";
 
 export const CONFIG_FILENAME = "terminus-cli.json";
 
-const KNOWN_KEYS = ["url", "email", "password_ref", "screens"] as const;
+const KNOWN_KEYS = ["url", "email", "password_command", "screens"] as const;
 
 export interface Config {
   file: string | null;
   url: string | undefined;
   email: string | undefined;
-  passwordRef: string | undefined;
+  passwordCommand: string | undefined;
   screensDir: string | undefined;
 }
 
@@ -17,7 +17,7 @@ export const EMPTY_CONFIG: Config = {
   file: null,
   url: undefined,
   email: undefined,
-  passwordRef: undefined,
+  passwordCommand: undefined,
   screensDir: undefined,
 };
 
@@ -39,7 +39,7 @@ export function parseConfig(text: string, file: string): Config {
   const body = raw as Record<string, unknown>;
 
   if ("password" in body) {
-    fail(file, `must not contain a password. Use "password_ref" with an op:// reference instead.`);
+    fail(file, `must not contain a password. Use "password_command" to fetch it instead.`);
   }
 
   const unknown = Object.keys(body).filter((key) => !(KNOWN_KEYS as readonly string[]).includes(key));
@@ -59,7 +59,7 @@ export function parseConfig(text: string, file: string): Config {
     file,
     url: body.url as string | undefined,
     email: body.email as string | undefined,
-    passwordRef: body.password_ref as string | undefined,
+    passwordCommand: body.password_command as string | undefined,
     screensDir: screens === undefined ? undefined : resolve(dirname(file), screens),
   };
 }
@@ -92,7 +92,7 @@ export type Source = string | null;
 export interface Settings {
   url: string | undefined;
   email: string | undefined;
-  passwordRef: string | undefined;
+  passwordCommand: string | undefined;
   screensDir: string | undefined;
   configFile: string | null;
   sources: {
@@ -135,9 +135,9 @@ export function resolveSettings(
     [fromCwd(envValue("TERMINUS_SCREENS_DIR")), "TERMINUS_SCREENS_DIR"],
     [config.screensDir, CONFIG_FILENAME],
   ]);
-  const [passwordRef, refSource] = pick([
-    [envValue("TERMINUS_PASSWORD_REF"), "TERMINUS_PASSWORD_REF"],
-    [config.passwordRef, CONFIG_FILENAME],
+  const [passwordCommand, commandSource] = pick([
+    [envValue("TERMINUS_PASSWORD_COMMAND"), "TERMINUS_PASSWORD_COMMAND"],
+    [config.passwordCommand, CONFIG_FILENAME],
   ]);
 
   const literal = env.TERMINUS_PASSWORD ? "TERMINUS_PASSWORD" : null;
@@ -145,13 +145,13 @@ export function resolveSettings(
   return {
     url,
     email,
-    passwordRef: literal ? undefined : passwordRef,
+    passwordCommand: literal ? undefined : passwordCommand,
     screensDir,
     configFile: config.file,
     sources: {
       url: urlSource,
       email: emailSource,
-      password: literal ?? refSource,
+      password: literal ?? commandSource,
       screens: screensSource,
     },
   };

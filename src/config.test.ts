@@ -44,20 +44,20 @@ describe("parseConfig", () => {
 
   it("reads the remaining keys", () => {
     const config = parseConfig(
-      '{"url":"http://localhost:2300","email":"a@example.com","password_ref":"op://V/i/password"}',
+      '{"url":"http://localhost:2300","email":"a@example.com","password_command":"print-my-password"}',
       "/x/terminus-cli.json",
     );
     expect(config).toMatchObject({
       url: "http://localhost:2300",
       email: "a@example.com",
-      passwordRef: "op://V/i/password",
+      passwordCommand: "print-my-password",
       screensDir: undefined,
     });
   });
 
   it("refuses a literal password, since the file gets committed", () => {
     expect(() => parseConfig('{"password":"hunter2"}', "/x/terminus-cli.json")).toThrow(
-      /must not contain a password.*password_ref/s,
+      /must not contain a password.*password_command/s,
     );
   });
 
@@ -109,7 +109,7 @@ describe("resolveSettings", () => {
     file: "/proj/terminus-cli.json",
     url: "http://config:2300",
     email: "config@example.com",
-    passwordRef: "op://V/config/password",
+    passwordCommand: "print-config-password",
     screensDir: "/proj/screens",
   };
   const noFlags = { url: undefined, email: undefined, screens: undefined };
@@ -123,7 +123,7 @@ describe("resolveSettings", () => {
     );
     expect(settings.url).toBe("http://flag:2300");
     expect(settings.email).toBe("env@example.com");
-    expect(settings.passwordRef).toBe("op://V/config/password");
+    expect(settings.passwordCommand).toBe("print-config-password");
   });
 
   it("falls back to the file for everything the flags and environment leave unset", () => {
@@ -131,7 +131,7 @@ describe("resolveSettings", () => {
     expect(settings).toEqual({
       url: "http://config:2300",
       email: "config@example.com",
-      passwordRef: "op://V/config/password",
+      passwordCommand: "print-config-password",
       screensDir: "/proj/screens",
       configFile: "/proj/terminus-cli.json",
       sources: {
@@ -154,7 +154,7 @@ describe("resolveSettings", () => {
     expect(settings).toEqual({
       url: undefined,
       email: undefined,
-      passwordRef: undefined,
+      passwordCommand: undefined,
       screensDir: undefined,
       configFile: null,
       sources: { url: null, email: null, password: null, screens: null },
@@ -167,7 +167,7 @@ describe("resolveSettings sources", () => {
     file: "/proj/terminus-cli.json",
     url: "http://config:2300",
     email: undefined,
-    passwordRef: "op://Vault/item/password",
+    passwordCommand: "print-my-password",
     screensDir: "/proj/screens",
   };
   const noFlags = { url: undefined, email: undefined, screens: undefined };
@@ -188,19 +188,19 @@ describe("resolveSettings sources", () => {
   });
 
   it("treats an empty environment variable as unset", () => {
-    const env = { TERMINUS_URL: "", TERMINUS_EMAIL: "", TERMINUS_PASSWORD_REF: "", TERMINUS_SCREENS_DIR: "" };
+    const env = { TERMINUS_URL: "", TERMINUS_EMAIL: "", TERMINUS_PASSWORD_COMMAND: "", TERMINUS_SCREENS_DIR: "" };
     const settings = resolveSettings(noFlags, env, config, "/cwd");
     expect(settings.url).toBe(config.url);
-    expect(settings.passwordRef).toBe(config.passwordRef);
+    expect(settings.passwordCommand).toBe(config.passwordCommand);
     expect(settings.screensDir).toBe(config.screensDir);
     expect(settings.sources.password).toBe(CONFIG_FILENAME);
   });
 
   it("agrees with resolvePassword that a literal beats a reference", () => {
-    const env = { TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://Vault/item/password" };
+    const env = { TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_COMMAND: "print-my-password" };
     const settings = resolveSettings(noFlags, env, config, "/cwd");
     expect(settings.sources.password).toBe("TERMINUS_PASSWORD");
-    expect(settings.passwordRef).toBeUndefined();
-    expect(resolvePassword(env, config.passwordRef)).toBe("literal");
+    expect(settings.passwordCommand).toBeUndefined();
+    expect(resolvePassword(env, config.passwordCommand)).toBe("literal");
   });
 });

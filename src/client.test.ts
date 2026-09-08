@@ -325,21 +325,21 @@ describe("token cache on disk", () => {
 });
 
 describe("resolvePassword", () => {
-  it("treats an empty TERMINUS_PASSWORD_REF as unset so the config reference still applies", () => {
-    expect(() => resolvePassword({ TERMINUS_PASSWORD_REF: "" })).toThrow(/No password source/);
+  it("treats an empty TERMINUS_PASSWORD_COMMAND as unset so the config reference still applies", () => {
+    expect(() => resolvePassword({ TERMINUS_PASSWORD_COMMAND: "" })).toThrow(/No password source/);
   });
 
   it("prefers the literal password when one is set, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://x/y/z" })).toBe("literal");
+    expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_COMMAND: "print-my-password" })).toBe("literal");
   });
 
   it("prefers a literal password over any reference, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" }, "op://Vault/item/password")).toBe("literal");
+    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" }, "print-my-password")).toBe("literal");
   });
 
   it("names every source when there is none", () => {
     expect(() => resolvePassword({})).toThrow(
-      /TERMINUS_PASSWORD_REF.*terminus-cli\.json.*TERMINUS_PASSWORD/s,
+      /TERMINUS_PASSWORD.*TERMINUS_PASSWORD_COMMAND.*password_command in terminus-cli\.json/s,
     );
   });
 });

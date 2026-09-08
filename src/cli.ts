@@ -30,15 +30,15 @@ so they mean the same thing from any directory:
   {
     "url": "http://localhost:2300",
     "email": "you@example.com",
-    "password_ref": "op://Vault/item/password",
+    "password_command": "<command that prints the password>",
     "screens": "screens"
   }
 
 Environment
   TERMINUS_URL             e.g. http://localhost:2300
   TERMINUS_EMAIL           account email
-  TERMINUS_PASSWORD_REF    an op:// reference, resolved with \`op read\` when a login is needed
-  TERMINUS_PASSWORD        fallback for CI or a machine without the 1Password CLI
+  TERMINUS_PASSWORD        the password itself
+  TERMINUS_PASSWORD_COMMAND  a command that prints the password, run only when logging in
   TERMINUS_SCREENS_DIR     as --screens
 
 A device's api_key is redacted from all output, including --json.`;
@@ -114,7 +114,7 @@ export async function run(argv: string[]): Promise<number> {
   const client = new TerminusClient({
     url: settings.url,
     email: settings.email,
-    password: () => resolvePassword(process.env, settings.passwordRef),
+    password: () => resolvePassword(process.env, settings.passwordCommand),
     verbose: args.verbose,
   });
 

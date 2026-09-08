@@ -11,7 +11,7 @@ export function defaultTokenCachePath(env: NodeJS.ProcessEnv = process.env): str
   return join(stateHome, "terminus-cli", "token.json");
 }
 
-const OP_READ_TIMEOUT_MS = 10_000;
+const PASSWORD_COMMAND_TIMEOUT_MS = 10_000;
 
 const EXPIRY_MARGIN_SECONDS = 60;
 
@@ -89,27 +89,31 @@ export function tokenIsUsable(token: string, nowSeconds = Date.now() / 1000): bo
   return exp - EXPIRY_MARGIN_SECONDS > nowSeconds;
 }
 
-export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configRef?: string): string {
+export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configCommand?: string): string {
   const direct = env.TERMINUS_PASSWORD;
   if (direct) return direct;
 
-  const ref = env.TERMINUS_PASSWORD_REF || configRef;
-  if (!ref) {
+  const command = env.TERMINUS_PASSWORD_COMMAND || configCommand;
+  if (!command) {
     throw new Error(
-      "No password source. Set TERMINUS_PASSWORD_REF (an op:// reference), or password_ref in " +
-        "terminus-cli.json, or TERMINUS_PASSWORD.",
+      "No password source. Set TERMINUS_PASSWORD, or set TERMINUS_PASSWORD_COMMAND (or " +
+        "password_command in terminus-cli.json) to a command that prints the password.",
     );
   }
 
-  const result = spawnSync("op", ["read", ref], { encoding: "utf8", timeout: OP_READ_TIMEOUT_MS });
+  const result = spawnSync(command, {
+    shell: true,
+    encoding: "utf8",
+    timeout: PASSWORD_COMMAND_TIMEOUT_MS,
+  });
   if (result.error) {
-    throw new Error(`Could not run \`op read\` to resolve TERMINUS_PASSWORD_REF: ${result.error.message}`);
+    throw new Error(`Could not run the password command \`${command}\`: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error(`\`op read ${ref}\` failed:\n${(result.stderr || "").trim()}`);
+    throw new Error(`Password command \`${command}\` failed:\n${(result.stderr || "").trim()}`);
   }
   const password = result.stdout.replace(/\n$/, "");
-  if (!password) throw new Error(`\`op read ${ref}\` returned nothing.`);
+  if (!password) throw new Error(`Password command \`${command}\` printed nothing.`);
   return password;
 }
 
