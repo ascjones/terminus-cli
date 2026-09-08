@@ -134,17 +134,21 @@ export function tokenIsUsable(token: string, nowSeconds = Date.now() / 1000): bo
 /**
  * Resolve the password without ever putting it in the environment or on a command line.
  *
- * `TERMINUS_PASSWORD_REF` is the preferred form: an `op://` reference resolved by the 1Password
- * CLI at the moment it is needed. `TERMINUS_PASSWORD` is the fallback for CI or a machine with no
- * `op`.
+ * A reference is the preferred form: an `op://` pointer resolved by the 1Password CLI at the
+ * moment it is needed, from `TERMINUS_PASSWORD_REF` or `password_ref` in `terminus-cli.json`.
+ * `TERMINUS_PASSWORD` is the fallback for CI or a machine with no `op`, and is the only form that
+ * is ever the secret itself — which is why the config file refuses to hold one.
  */
-export function resolvePassword(env: NodeJS.ProcessEnv = process.env): string {
+export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configRef?: string): string {
   const direct = env.TERMINUS_PASSWORD;
   if (direct) return direct;
 
-  const ref = env.TERMINUS_PASSWORD_REF;
+  const ref = env.TERMINUS_PASSWORD_REF ?? configRef;
   if (!ref) {
-    throw new Error("Set TERMINUS_PASSWORD_REF (an op:// reference) or TERMINUS_PASSWORD.");
+    throw new Error(
+      "No password source. Set TERMINUS_PASSWORD_REF (an op:// reference), or password_ref in " +
+        "terminus-cli.json, or TERMINUS_PASSWORD.",
+    );
   }
 
   const result = spawnSync("op", ["read", ref], { encoding: "utf8" });
@@ -176,6 +180,15 @@ export function problemStatus(parsed: unknown): number | null {
   const body = parsed as Record<string, unknown>;
   if ("data" in body) return null;
   return typeof body.status === "number" && body.status >= 400 ? body.status : null;
+}
+
+/** Dig the useful reason out of a fetch rejection. */
+export function connectionDetail(cause: unknown): string {
+  if (!(cause instanceof Error)) return String(cause);
+  const inner = cause.cause;
+  if (inner instanceof AggregateError && inner.errors.length > 0) return String(inner.errors[0]);
+  if (inner instanceof Error) return inner.message;
+  return cause.message;
 }
 
 export interface ClientOptions {
@@ -220,23 +233,6 @@ export class TerminusClient {
     this.#verbose = options.verbose ?? false;
   }
 
-  /** Build a client from TERMINUS_* environment variables. */
-  static fromEnv(
-    overrides: Partial<ClientOptions> = {},
-    env: NodeJS.ProcessEnv = process.env,
-  ): TerminusClient {
-    const url = overrides.url ?? env.TERMINUS_URL;
-    if (!url) throw new Error("Set TERMINUS_URL (e.g. http://localhost:2300) or pass --url.");
-    const email = overrides.email ?? env.TERMINUS_EMAIL;
-    if (!email) throw new Error("Set TERMINUS_EMAIL.");
-    return new TerminusClient({
-      ...overrides,
-      url,
-      email,
-      password: overrides.password ?? (() => resolvePassword(env)),
-    });
-  }
-
   /**
    * A usable access token: from memory, then the on-disk cache, then a fresh login.
    *
@@ -258,9 +254,18 @@ export class TerminusClient {
     return token;
   }
 
+  /** Perform the request, turning a connection failure into an error that names the URL. */
+  async #send(method: string, url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.#fetch(url, init);
+    } catch (cause) {
+      throw new Error(`${method} ${url} could not connect: ${connectionDetail(cause)}`);
+    }
+  }
+
   async #login(): Promise<string> {
     const path = "/login";
-    const response = await this.#fetch(`${this.url}${path}`, {
+    const response = await this.#send("POST", `${this.url}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -324,7 +329,7 @@ export class TerminusClient {
     const cookie = this.jar.header();
     if (cookie) headers.set("Cookie", cookie);
 
-    const response = await this.#fetch(`${this.url}${path}`, { ...init, headers });
+    const response = await this.#send(method, `${this.url}${path}`, { ...init, headers });
     this.jar.store(response.headers);
     this.#log(method, path, response.status);
     return response;

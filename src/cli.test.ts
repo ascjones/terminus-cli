@@ -13,9 +13,12 @@ describe("parseArgs", () => {
   });
 
   it("reads the value flags", () => {
-    const parsed = parseArgs(["devices", "--url", "http://other:2300", "--email", "b@example.com"]);
+    const parsed = parseArgs([
+      "devices", "--url", "http://other:2300", "--email", "b@example.com", "--screens", "../screens",
+    ]);
     expect(parsed.url).toBe("http://other:2300");
     expect(parsed.email).toBe("b@example.com");
+    expect(parsed.screens).toBe("../screens");
   });
 
   it("rejects a value flag with nothing after it", () => {

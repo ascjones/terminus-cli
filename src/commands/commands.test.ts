@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { report } from "./config.ts";
 import { redact } from "./devices.ts";
 import { resolvePlaylist } from "./playlist.ts";
 import { screenUrl } from "./screens.ts";
@@ -56,5 +57,38 @@ describe("resolvePlaylist", () => {
     const resolved = resolvePlaylist(playlist, [screens[0] as Screen]);
     expect(resolved.items).toHaveLength(2);
     expect(resolved.items[1]?.screen_name).toBeNull();
+  });
+});
+
+describe("config report", () => {
+  const base = {
+    url: "http://localhost:2300",
+    email: "you@example.com",
+    passwordRef: "op://Vault/item/password",
+    screensDir: "/proj/screens",
+    configFile: "/proj/terminus-cli.json",
+    sources: { url: "--url", email: "terminus-cli.json", password: "terminus-cli.json", screens: null },
+  };
+
+  it("shows a reference, which is a pointer rather than a secret", () => {
+    expect(report(base).settings.password).toEqual({
+      value: "op://Vault/item/password",
+      source: "terminus-cli.json",
+    });
+  });
+
+  it("never carries a literal password, only the name of where it came from", () => {
+    const literal = report({
+      ...base,
+      passwordRef: undefined,
+      sources: { ...base.sources, password: "TERMINUS_PASSWORD" },
+    });
+    expect(literal.settings.password).toEqual({ value: null, source: "TERMINUS_PASSWORD" });
+    expect(JSON.stringify(literal)).not.toContain("op://");
+  });
+
+  it("distinguishes unset from set-but-hidden", () => {
+    const unset = report({ ...base, passwordRef: undefined, sources: { ...base.sources, password: null } });
+    expect(unset.settings.password).toEqual({ value: null, source: null });
   });
 });

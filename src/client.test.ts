@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  connectionDetail,
   CookieJar,
   TerminusClient,
   TerminusError,
@@ -212,23 +213,25 @@ describe("resolvePassword", () => {
     expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://x/y/z" })).toBe("literal");
   });
 
-  it("names both variables when neither is set", () => {
-    expect(() => resolvePassword({})).toThrow(/TERMINUS_PASSWORD_REF.*TERMINUS_PASSWORD/s);
+  it("prefers a literal password over any reference, without shelling out", () => {
+    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" }, "op://Vault/item/password")).toBe("literal");
+  });
+
+  it("names every source when there is none", () => {
+    expect(() => resolvePassword({})).toThrow(
+      /TERMINUS_PASSWORD_REF.*terminus-cli\.json.*TERMINUS_PASSWORD/s,
+    );
   });
 });
 
-describe("TerminusClient.fromEnv", () => {
-  it("requires a URL and an email", () => {
-    expect(() => TerminusClient.fromEnv({}, {})).toThrow(/TERMINUS_URL/);
-    expect(() => TerminusClient.fromEnv({}, { TERMINUS_URL: "http://x" })).toThrow(/TERMINUS_EMAIL/);
+describe("connectionDetail", () => {
+  it("digs the real reason out of undici's nested rejection", () => {
+    const refused = new Error("connect ECONNREFUSED ::1:9999");
+    const failed = new TypeError("fetch failed", { cause: new AggregateError([refused], "") });
+    expect(connectionDetail(failed)).toContain("ECONNREFUSED");
   });
 
-  it("lets --url and --email override the environment", () => {
-    const c = TerminusClient.fromEnv(
-      { url: "http://other:2300", email: "b@example.com", password: () => "" },
-      { TERMINUS_URL: "http://localhost:2300", TERMINUS_EMAIL: "a@example.com" },
-    );
-    expect(c.url).toBe("http://other:2300");
-    expect(c.email).toBe("b@example.com");
+  it("falls back to the outer message when there is nothing nested", () => {
+    expect(connectionDetail(new Error("boom"))).toBe("boom");
   });
 });
