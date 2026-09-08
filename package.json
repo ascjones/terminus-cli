@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A CLI for a self-hosted Terminus server (usetrmnl/terminus).",
+  "license": "MIT",
   "bin": {
     "terminus": "./scripts/terminus.ts"
   },
