@@ -1,0 +1,10 @@
+node_modules/
+build/
+.env
+*.log
+
+# Local settings for developing the CLI itself. A caller repo commits its own.
+terminus-cli.json
+
+# Private working notes, kept locally.
+HANDOFF.md
