@@ -15,7 +15,6 @@ import {
   tokenIsUsable,
 } from "./client.ts";
 
-/** A JWT-shaped string whose `exp` claim is the given offset from now. Not signed; nothing here verifies. */
 function fakeToken(expiresInSeconds: number): string {
   const claims = { exp: Math.floor(Date.now() / 1000) + expiresInSeconds, account_id: 1 };
   return `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
@@ -28,7 +27,6 @@ interface Call {
   body: string | null;
 }
 
-/** A fetch stub that records every call and replays a queue of responses. */
 function stubFetch(responses: Response[]): { fetch: typeof globalThis.fetch; calls: Call[] } {
   const calls: Call[] = [];
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -111,7 +109,6 @@ describe("token lifetime", () => {
 });
 
 describe("problemStatus", () => {
-  // Terminus 0.72.0 answers a missing device or playlist with HTTP 200 and a body saying 404.
   it("reports the status an error body claims", () => {
     expect(problemStatus({ type: "about:blank", title: "Not Found", status: 404 })).toBe(404);
   });
@@ -200,7 +197,6 @@ describe("TerminusClient.form", () => {
     const put = calls[2];
     const sent = new URLSearchParams(put?.body ?? "");
     expect(sent.get("_csrf_token")).toBe("f".repeat(64));
-    // Repeated keys are how Rack reads `foo[]` into an array; the build matrix depends on it.
     expect(sent.getAll("extension[device_ids][]")).toEqual(["2", "3"]);
     expect(put?.headers.get("cookie")).toBe("terminus.session=page-cookie");
   });
@@ -330,7 +326,6 @@ describe("token cache on disk", () => {
 
 describe("resolvePassword", () => {
   it("treats an empty TERMINUS_PASSWORD_REF as unset so the config reference still applies", () => {
-    // Nothing here runs `op`: the assertion is only that the config ref is the one it would read.
     expect(() => resolvePassword({ TERMINUS_PASSWORD_REF: "" })).toThrow(/No password source/);
   });
 

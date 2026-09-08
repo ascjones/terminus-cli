@@ -1,17 +1,7 @@
-/** `terminus devices` — list the devices this server knows about. */
-
 import type { TerminusClient } from "../client.ts";
 import { orDash, print, shortTime, table } from "../format.ts";
 import type { Device, Envelope } from "../types.ts";
 
-/**
- * A device record with its firmware credential removed.
- *
- * `Serializers::Device` exposes `api_key`, which is the secret the panel authenticates with. It
- * must not reach stdout, a log or a pipeline, so it is redacted before anything is printed —
- * including in `--json` mode, where it would otherwise be the easiest thing in the world to
- * accidentally commit.
- */
 export type RedactedDevice = Omit<Device, "api_key"> & { api_key: "[redacted]" };
 
 export function redact(device: Device): RedactedDevice {

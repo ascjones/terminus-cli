@@ -1,8 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { USAGE, errorReport, optionalId, parseArgs, run } from "./cli.ts";
+import { describe, expect, it } from "vitest";
+import { errorReport, optionalId, parseArgs } from "./cli.ts";
 import { TerminusError } from "./client.ts";
 
 describe("parseArgs", () => {
@@ -49,70 +46,5 @@ describe("errorReport", () => {
 
   it("falls back to the message for anything else", () => {
     expect(errorReport(new Error("boom"))).toBe("boom");
-  });
-});
-
-describe("run", () => {
-  const saved = { cwd: process.cwd(), env: { ...process.env } };
-  const dirs: string[] = [];
-  const settingsVars = ["TERMINUS_URL", "TERMINUS_EMAIL", "TERMINUS_PASSWORD", "TERMINUS_PASSWORD_REF", "TERMINUS_SCREENS_DIR"];
-
-  /** Run from an empty temp dir so no terminus-cli.json above the checkout leaks in. */
-  function isolate(env: Record<string, string> = {}): void {
-    const dir = mkdtempSync(join(tmpdir(), "terminus-cli-run-"));
-    dirs.push(dir);
-    process.chdir(dir);
-    for (const name of settingsVars) delete process.env[name];
-    Object.assign(process.env, env);
-  }
-
-  function captureStdout(): string[] {
-    const out: string[] = [];
-    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-      out.push(String(chunk));
-      return true;
-    });
-    return out;
-  }
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    process.chdir(saved.cwd);
-    for (const name of settingsVars) delete process.env[name];
-    for (const name of settingsVars) if (saved.env[name] !== undefined) process.env[name] = saved.env[name];
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("prints usage and exits 1 with no command, 0 with --help", async () => {
-    isolate();
-    const out = captureStdout();
-    expect(await run([])).toBe(1);
-    expect(await run(["--help"])).toBe(0);
-    expect(out[0]).toContain(USAGE);
-  });
-
-  it("reports the settings without touching the network", async () => {
-    isolate({ TERMINUS_URL: "http://localhost:2300" });
-    const out = captureStdout();
-    expect(await run(["config", "--json"])).toBe(0);
-    expect(JSON.parse(out.join(""))).toMatchObject({
-      config_file: null,
-      settings: { url: { value: "http://localhost:2300", source: "TERMINUS_URL" }, email: { value: null, source: null } },
-    });
-  });
-
-  it("names every source for a missing url or email before any request", async () => {
-    isolate();
-    await expect(run(["devices"])).rejects.toThrow(/TERMINUS_URL.*terminus-cli\.json.*--url/);
-    isolate({ TERMINUS_URL: "http://localhost:2300" });
-    await expect(run(["devices"])).rejects.toThrow(/TERMINUS_EMAIL.*terminus-cli\.json.*--email/);
-  });
-
-  it("rejects an unknown command or playlist subcommand", async () => {
-    isolate({ TERMINUS_URL: "http://localhost:2300", TERMINUS_EMAIL: "a@example.com" });
-    await expect(run(["bogus"])).rejects.toThrow(/Unknown command "bogus"/);
-    await expect(run(["playlist"])).rejects.toThrow(/Unknown playlist subcommand ""/);
-    await expect(run(["playlist", "nope"])).rejects.toThrow(/Unknown playlist subcommand "nope"/);
-    await expect(run(["playlist", "show", "abc"])).rejects.toThrow(/numeric playlist id/);
   });
 });

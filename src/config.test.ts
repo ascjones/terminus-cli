@@ -14,7 +14,6 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-/** A throwaway project tree; `files` maps a relative path to its contents. */
 function project(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "terminus-cli-test-"));
   temporaryDirectories.push(root);
@@ -63,7 +62,6 @@ describe("parseConfig", () => {
   });
 
   it("rejects a mistyped key instead of silently ignoring it", () => {
-    // A silently ignored "screen" would leave the CLI on a default the author thought they replaced.
     expect(() => parseConfig('{"screen":"screens"}', "/x/terminus-cli.json")).toThrow(/unknown key screen/);
   });
 
@@ -90,7 +88,6 @@ describe("findConfigFile", () => {
   });
 
   it("gives up at the filesystem root rather than looping", () => {
-    // A temp dir with no config anywhere beneath it; the walk terminates at /.
     const root = project({ "empty/.keep": "" });
     expect(findConfigFile(join(root, "empty"))).toBeNull();
   });
@@ -200,7 +197,6 @@ describe("resolveSettings sources", () => {
   });
 
   it("agrees with resolvePassword that a literal beats a reference", () => {
-    // These two apply the same precedence rule in different places; this pins them together.
     const env = { TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://Vault/item/password" };
     const settings = resolveSettings(noFlags, env, config, "/cwd");
     expect(settings.sources.password).toBe("TERMINUS_PASSWORD");

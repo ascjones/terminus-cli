@@ -1,5 +1,3 @@
-/** `terminus playlist show [<id>]` — what is on a playlist, in order, and which item is current. */
-
 import type { TerminusClient } from "../client.ts";
 import { print, shortTime, table } from "../format.ts";
 import type { Envelope, Playlist, Screen } from "../types.ts";
@@ -8,7 +6,6 @@ export interface ResolvedItem {
   id: number;
   position: number;
   screen_id: number;
-  /** Null when the item points at a screen the screens API no longer returns. */
   screen_name: string | null;
   screen_label: string | null;
   current: boolean;
@@ -24,13 +21,6 @@ export interface ResolvedPlaylist {
   items: ResolvedItem[];
 }
 
-/**
- * Join playlist items to their screens.
- *
- * A dangling `screen_id` is reported rather than hidden: `PATCH /api/playlists/:id` with an
- * `items` key deletes and recreates every item, which is exactly how a playlist ends up pointing
- * at screens that no longer exist. Seeing it here is the early warning.
- */
 export function resolvePlaylist(playlist: Playlist, screens: Screen[]): ResolvedPlaylist {
   const byId = new Map(screens.map((screen) => [screen.id, screen]));
   return {

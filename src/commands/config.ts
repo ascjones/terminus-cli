@@ -1,15 +1,6 @@
-/**
- * `terminus config` — what the CLI resolved, and where each value came from.
- *
- * The answer to "why is it talking to the wrong server?" once a flag, the environment and a
- * config file can all supply one. It reports sources rather than just values, and it makes no
- * network request: this is about the CLI's own state, not the server's.
- */
-
 import { CONFIG_FILENAME, type Settings } from "../config.ts";
 import { orDash, print, table } from "../format.ts";
 
-/** What `--json` emits and the table renders. `password` never carries the secret. */
 export interface ConfigReport {
   config_file: string | null;
   settings: {
@@ -26,8 +17,6 @@ export function report(settings: Settings): ConfigReport {
     settings: {
       url: { value: settings.url ?? null, source: settings.sources.url },
       email: { value: settings.email ?? null, source: settings.sources.email },
-      // A reference is a pointer and safe to show; a literal password is never read here at all,
-      // so the value stays null and only the source names where it would come from.
       password: { value: settings.passwordRef ?? null, source: settings.sources.password },
       screens: { value: settings.screensDir ?? null, source: settings.sources.screens },
     },

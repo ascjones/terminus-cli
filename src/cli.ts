@@ -1,8 +1,3 @@
-/**
- * Argument parsing and command dispatch. `scripts/terminus.ts` is the thin entry point that
- * calls `run` and turns a thrown error into an exit status.
- */
-
 import { TerminusClient, TerminusError, resolvePassword } from "./client.ts";
 import { CONFIG_FILENAME, loadConfig, resolveSettings } from "./config.ts";
 import { configCommand } from "./commands/config.ts";
@@ -58,7 +53,6 @@ export interface ParsedArgs {
   screens?: string;
 }
 
-/** A flag that takes a value; everything else is either a boolean flag or a positional. */
 const VALUE_FLAGS = new Set(["--url", "--email", "--screens"]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -83,7 +77,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
-/** Parse a positional that must be a playlist id, or null when it was not given. */
 export function optionalId(value: string | undefined, what: string): number | null {
   if (value === undefined) return null;
   if (!/^\d+$/.test(value)) throw new Error(`Expected a numeric ${what}, got "${value}".`);
@@ -146,7 +139,6 @@ export async function run(argv: string[]): Promise<number> {
   }
 }
 
-/** Turn any thrown error into the message that should reach stderr. */
 export function errorReport(error: unknown): string {
   if (error instanceof TerminusError) return error.report;
   if (error instanceof Error) return error.message;
