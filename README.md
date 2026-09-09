@@ -33,15 +33,12 @@ resolve against the file, not the cwd.
 }
 ```
 
-The password comes from `TERMINUS_PASSWORD` and nowhere else. If it lives in a secret store,
-resolve it in your shell:
+The password only ever comes from `TERMINUS_PASSWORD`; the file is meant to be committed, so it
+refuses a `password` key. Resolve it in your shell if it lives in a secret store:
 
 ```sh
 export TERMINUS_PASSWORD=$(your-secret-store read terminus/password)
 ```
-
-The config file is meant to be committed, so it holds no secret at all and refuses a `password`
-key outright.
 
 A device's `api_key` is redacted from all output, `--json` included.
 
