@@ -17,7 +17,7 @@ export function report(settings: Settings): ConfigReport {
     settings: {
       url: { value: settings.url ?? null, source: settings.sources.url },
       email: { value: settings.email ?? null, source: settings.sources.email },
-      password: { value: settings.passwordRef ?? null, source: settings.sources.password },
+      password: { value: null, source: settings.sources.password },
       screens: { value: settings.screensDir ?? null, source: settings.sources.screens },
     },
   };

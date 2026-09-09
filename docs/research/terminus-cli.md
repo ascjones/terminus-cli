@@ -142,17 +142,15 @@ beyond the password itself, and no refresh-token expiry to babysit. Cache the ac
 future; fall back to a fresh login. Skip the refresh-token flow entirely — it buys nothing over
 re-login and adds rotation state that goes stale if a run is interrupted.
 
-Credentials come from the environment, with a 1Password reference as the preferred form so nothing
-is stored in the clear:
+Credentials come from the environment. The CLI knows nothing about secret stores: it reads
+`TERMINUS_PASSWORD`, and resolving that from wherever the password actually lives is the shell's
+job, which keeps the CLI out of the business of executing commands from a config file.
 
 ```sh
 TERMINUS_URL=http://localhost:2300
 TERMINUS_EMAIL=you@example.com
-TERMINUS_PASSWORD_REF=op://Vault/Terminus/password   # resolved via `op read`
-# or TERMINUS_PASSWORD=... for CI or a machine without the 1Password CLI
+export TERMINUS_PASSWORD=$(your-secret-store read terminus/password)
 ```
-
-Any 1Password item holding the account's login will do; the worked example uses one.
 
 ### Things that bite
 
@@ -435,14 +433,14 @@ Two cheap defences worth building in:
 
 ## Worked example: authenticated read against the running server
 
-Ran on 7 September 2026 against `http://localhost:2300`, Terminus 0.72.0. The password came from
-1Password (`op read`) and never touched the shell history, the transcript or disk.
+Ran on 7 September 2026 against `http://localhost:2300`, Terminus 0.72.0. The credentials came from
+a secret store and never touched the shell history, the transcript or disk.
 
 **1. Log in and inspect the token.**
 
 ```sh
-LOGIN=$(op read "op://Vault/Terminus/username")
-PASS=$(op read "op://Vault/Terminus/password")
+LOGIN=$(your-secret-store read terminus/username)
+PASS=$(your-secret-store read terminus/password)
 curl -s -X POST http://localhost:2300/login \
      -H 'Content-Type: application/json' -H 'Accept: application/json' \
      -d "$(jq -nc --arg l "$LOGIN" --arg p "$PASS" '{login:$l,password:$p}')"

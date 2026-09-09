@@ -32,40 +32,33 @@ afterEach(() => {
 });
 
 describe("parseConfig", () => {
-  it("resolves a screens path against the config file, not the working directory", () => {
-    const config = parseConfig('{"screens": "screens"}', "/home/me/project/terminus-cli.json");
-    expect(config.screensDir).toBe("/home/me/project/screens");
-  });
-
-  it("leaves an absolute screens path alone", () => {
-    const config = parseConfig('{"screens": "/srv/screens"}', "/home/me/terminus-cli.json");
-    expect(config.screensDir).toBe("/srv/screens");
-  });
-
-  it("reads the remaining keys", () => {
+  it("reads every key, resolving screens against the config file not the working directory", () => {
     const config = parseConfig(
-      '{"url":"http://localhost:2300","email":"a@example.com","password_ref":"op://V/i/password"}',
-      "/x/terminus-cli.json",
+      '{"url":"http://localhost:2300","email":"a@example.com","screens":"screens"}',
+      "/home/me/project/terminus-cli.json",
     );
     expect(config).toMatchObject({
       url: "http://localhost:2300",
       email: "a@example.com",
-      passwordRef: "op://V/i/password",
-      screensDir: undefined,
+      screensDir: "/home/me/project/screens",
     });
+  });
+
+  it("leaves an absolute screens path alone, and leaves screens unset when absent", () => {
+    expect(parseConfig('{"screens": "/srv/screens"}', "/home/me/terminus-cli.json").screensDir).toBe(
+      "/srv/screens",
+    );
+    expect(parseConfig('{"url": "http://x:2300"}', "/home/me/terminus-cli.json").screensDir).toBeUndefined();
   });
 
   it("refuses a literal password, since the file gets committed", () => {
     expect(() => parseConfig('{"password":"hunter2"}', "/x/terminus-cli.json")).toThrow(
-      /must not contain a password.*password_ref/s,
+      /must not contain a password.*TERMINUS_PASSWORD/s,
     );
   });
 
-  it("rejects a mistyped key instead of silently ignoring it", () => {
+  it("rejects a mistyped key and a non-string value, instead of silently ignoring either", () => {
     expect(() => parseConfig('{"screen":"screens"}', "/x/terminus-cli.json")).toThrow(/unknown key screen/);
-  });
-
-  it("rejects values that are not non-empty strings", () => {
     expect(() => parseConfig('{"url": 2300}', "/x/terminus-cli.json")).toThrow(/"url" must be a non-empty string/);
     expect(() => parseConfig('{"url": ""}', "/x/terminus-cli.json")).toThrow(/"url" must be a non-empty string/);
   });
@@ -94,13 +87,10 @@ describe("findConfigFile", () => {
 });
 
 describe("loadConfig", () => {
-  it("returns the empty config when there is no file", () => {
-    expect(loadConfig(join(project({ "empty/.keep": "" }), "empty"))).toEqual(EMPTY_CONFIG);
-  });
-
-  it("resolves a screens path relative to the file it found while walking up", () => {
+  it("resolves a screens path against the file it walked up to, or reports no file at all", () => {
     const root = project({ [CONFIG_FILENAME]: '{"screens":"screens"}', "sub/deep/.keep": "" });
     expect(loadConfig(join(root, "sub", "deep")).screensDir).toBe(join(root, "screens"));
+    expect(loadConfig(join(project({ "empty/.keep": "" }), "empty"))).toEqual(EMPTY_CONFIG);
   });
 });
 
@@ -109,7 +99,6 @@ describe("resolveSettings", () => {
     file: "/proj/terminus-cli.json",
     url: "http://config:2300",
     email: "config@example.com",
-    passwordRef: "op://V/config/password",
     screensDir: "/proj/screens",
   };
   const noFlags = { url: undefined, email: undefined, screens: undefined };
@@ -123,7 +112,6 @@ describe("resolveSettings", () => {
     );
     expect(settings.url).toBe("http://flag:2300");
     expect(settings.email).toBe("env@example.com");
-    expect(settings.passwordRef).toBe("op://V/config/password");
   });
 
   it("falls back to the file for everything the flags and environment leave unset", () => {
@@ -131,13 +119,12 @@ describe("resolveSettings", () => {
     expect(settings).toEqual({
       url: "http://config:2300",
       email: "config@example.com",
-      passwordRef: "op://V/config/password",
-      screensDir: "/proj/screens",
+        screensDir: "/proj/screens",
       configFile: "/proj/terminus-cli.json",
       sources: {
         url: CONFIG_FILENAME,
         email: CONFIG_FILENAME,
-        password: CONFIG_FILENAME,
+        password: null,
         screens: CONFIG_FILENAME,
       },
     });
@@ -154,7 +141,6 @@ describe("resolveSettings", () => {
     expect(settings).toEqual({
       url: undefined,
       email: undefined,
-      passwordRef: undefined,
       screensDir: undefined,
       configFile: null,
       sources: { url: null, email: null, password: null, screens: null },
@@ -167,7 +153,6 @@ describe("resolveSettings sources", () => {
     file: "/proj/terminus-cli.json",
     url: "http://config:2300",
     email: undefined,
-    passwordRef: "op://Vault/item/password",
     screensDir: "/proj/screens",
   };
   const noFlags = { url: undefined, email: undefined, screens: undefined };
@@ -182,25 +167,21 @@ describe("resolveSettings sources", () => {
     expect(settings.sources).toEqual({
       url: "--url",
       email: "TERMINUS_EMAIL",
-      password: CONFIG_FILENAME,
+      password: null,
       screens: "--screens",
     });
+
+    const withPassword = { TERMINUS_PASSWORD: "literal" };
+    expect(resolveSettings(noFlags, withPassword, config, "/cwd").sources.password).toBe("TERMINUS_PASSWORD");
+    expect(resolvePassword(withPassword)).toBe("literal");
   });
 
   it("treats an empty environment variable as unset", () => {
-    const env = { TERMINUS_URL: "", TERMINUS_EMAIL: "", TERMINUS_PASSWORD_REF: "", TERMINUS_SCREENS_DIR: "" };
+    const env = { TERMINUS_URL: "", TERMINUS_EMAIL: "", TERMINUS_PASSWORD: "", TERMINUS_SCREENS_DIR: "" };
     const settings = resolveSettings(noFlags, env, config, "/cwd");
     expect(settings.url).toBe(config.url);
-    expect(settings.passwordRef).toBe(config.passwordRef);
     expect(settings.screensDir).toBe(config.screensDir);
-    expect(settings.sources.password).toBe(CONFIG_FILENAME);
+    expect(settings.sources.password).toBeNull();
   });
 
-  it("agrees with resolvePassword that a literal beats a reference", () => {
-    const env = { TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://Vault/item/password" };
-    const settings = resolveSettings(noFlags, env, config, "/cwd");
-    expect(settings.sources.password).toBe("TERMINUS_PASSWORD");
-    expect(settings.passwordRef).toBeUndefined();
-    expect(resolvePassword(env, config.passwordRef)).toBe("literal");
-  });
 });

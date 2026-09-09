@@ -74,34 +74,25 @@ const ok = (): Response => new Response(JSON.stringify({ data: [] }), { status: 
 describe("CookieJar", () => {
   it("keeps the latest value of each cookie and renders one Cookie header", () => {
     const jar = new CookieJar();
+    expect(jar.header()).toBeUndefined();
     jar.store(new Headers([["set-cookie", "terminus.session=one; path=/; httponly"]]));
     jar.store(new Headers([["set-cookie", "terminus.session=two; path=/"], ["set-cookie", "other=x"]]));
     expect(jar.header()).toBe("terminus.session=two; other=x");
   });
-
-  it("has no header until it has a cookie", () => {
-    expect(new CookieJar().header()).toBeUndefined();
-  });
 });
 
 describe("extractCsrfToken", () => {
-  it("lifts the token out of Hanami's hidden input", () => {
+  it("lifts the token out of Hanami's hidden input, or throws rather than posting a bare 500", () => {
     const html = `<form><input type="hidden" name="_csrf_token" value="${"a".repeat(64)}"></form>`;
     expect(extractCsrfToken(html)).toBe("a".repeat(64));
-  });
-
-  it("throws rather than posting a request that would be rejected as a bare 500", () => {
     expect(() => extractCsrfToken("<form></form>")).toThrow(/No _csrf_token/);
   });
 });
 
 describe("token lifetime", () => {
-  it("reads the exp claim", () => {
+  it("reads the exp claim, and treats one inside the safety margin as unusable", () => {
     expect(jwtExpiry(fakeToken(1800))).toBeGreaterThan(Date.now() / 1000);
     expect(jwtExpiry("not-a-jwt")).toBeNull();
-  });
-
-  it("treats a token inside the safety margin as unusable", () => {
     expect(tokenIsUsable(fakeToken(1800))).toBe(true);
     expect(tokenIsUsable(fakeToken(30))).toBe(false);
     expect(tokenIsUsable(fakeToken(-1))).toBe(false);
@@ -109,11 +100,8 @@ describe("token lifetime", () => {
 });
 
 describe("problemStatus", () => {
-  it("reports the status an error body claims", () => {
+  it("reports the status an error body claims, and leaves normal payloads alone", () => {
     expect(problemStatus({ type: "about:blank", title: "Not Found", status: 404 })).toBe(404);
-  });
-
-  it("leaves normal payloads alone", () => {
     expect(problemStatus({ data: [{ id: 1 }] })).toBeNull();
     expect(problemStatus({ data: { id: 1, status: 404 } })).toBeNull();
     expect(problemStatus([{ id: 1 }])).toBeNull();
@@ -325,33 +313,18 @@ describe("token cache on disk", () => {
 });
 
 describe("resolvePassword", () => {
-  it("treats an empty TERMINUS_PASSWORD_REF as unset so the config reference still applies", () => {
-    expect(() => resolvePassword({ TERMINUS_PASSWORD_REF: "" })).toThrow(/No password source/);
-  });
-
-  it("prefers the literal password when one is set, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_REF: "op://x/y/z" })).toBe("literal");
-  });
-
-  it("prefers a literal password over any reference, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" }, "op://Vault/item/password")).toBe("literal");
-  });
-
-  it("names every source when there is none", () => {
-    expect(() => resolvePassword({})).toThrow(
-      /TERMINUS_PASSWORD_REF.*terminus-cli\.json.*TERMINUS_PASSWORD/s,
-    );
+  it("returns TERMINUS_PASSWORD, and points at the shell when it is unset or empty", () => {
+    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" })).toBe("literal");
+    expect(() => resolvePassword({ TERMINUS_PASSWORD: "" })).toThrow(/secret store/);
+    expect(() => resolvePassword({})).toThrow(/TERMINUS_PASSWORD.*secret store/s);
   });
 });
 
 describe("connectionDetail", () => {
-  it("digs the real reason out of undici's nested rejection", () => {
+  it("digs the real reason out of undici's nested rejection, or falls back to the outer message", () => {
     const refused = new Error("connect ECONNREFUSED ::1:9999");
     const failed = new TypeError("fetch failed", { cause: new AggregateError([refused], "") });
     expect(connectionDetail(failed)).toContain("ECONNREFUSED");
-  });
-
-  it("falls back to the outer message when there is nothing nested", () => {
     expect(connectionDetail(new Error("boom"))).toBe("boom");
   });
 });

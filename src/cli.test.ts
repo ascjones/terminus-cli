@@ -21,11 +21,8 @@ describe("parseArgs", () => {
     expect(parsed.screens).toBe("../screens");
   });
 
-  it("rejects a value flag with nothing after it", () => {
+  it("rejects a dangling value flag and an unknown option, rather than reading either as a command", () => {
     expect(() => parseArgs(["devices", "--url"])).toThrow(/--url needs a value/);
-  });
-
-  it("rejects an unknown option rather than treating it as a command", () => {
     expect(() => parseArgs(["devices", "--jsonn"])).toThrow(/Unknown option --jsonn/);
   });
 });
@@ -39,12 +36,9 @@ describe("optionalId", () => {
 });
 
 describe("errorReport", () => {
-  it("prints a failing response body verbatim under the request line", () => {
+  it("prints a failing response body verbatim, and a plain message otherwise", () => {
     const error = new TerminusError("PUT", "/extensions/1", 422, '{"errors":{"name":["is missing"]}}');
     expect(errorReport(error)).toBe('PUT /extensions/1 -> HTTP 422\n{"errors":{"name":["is missing"]}}');
-  });
-
-  it("falls back to the message for anything else", () => {
     expect(errorReport(new Error("boom"))).toBe("boom");
   });
 });
