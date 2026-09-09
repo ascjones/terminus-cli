@@ -30,15 +30,13 @@ so they mean the same thing from any directory:
   {
     "url": "http://localhost:2300",
     "email": "you@example.com",
-    "password_command": "<command that prints the password>",
     "screens": "screens"
   }
 
 Environment
   TERMINUS_URL             e.g. http://localhost:2300
   TERMINUS_EMAIL           account email
-  TERMINUS_PASSWORD        the password itself
-  TERMINUS_PASSWORD_COMMAND  a command that prints the password, run only when logging in
+  TERMINUS_PASSWORD        the password; resolve it in your shell if it lives in a secret store
   TERMINUS_SCREENS_DIR     as --screens
 
 A device's api_key is redacted from all output, including --json.`;
@@ -114,7 +112,7 @@ export async function run(argv: string[]): Promise<number> {
   const client = new TerminusClient({
     url: settings.url,
     email: settings.email,
-    password: () => resolvePassword(process.env, settings.passwordCommand),
+    password: () => resolvePassword(process.env),
     verbose: args.verbose,
   });
 

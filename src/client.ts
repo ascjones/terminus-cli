@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -11,7 +10,6 @@ export function defaultTokenCachePath(env: NodeJS.ProcessEnv = process.env): str
   return join(stateHome, "terminus-cli", "token.json");
 }
 
-const PASSWORD_COMMAND_TIMEOUT_MS = 10_000;
 
 const EXPIRY_MARGIN_SECONDS = 60;
 
@@ -89,31 +87,14 @@ export function tokenIsUsable(token: string, nowSeconds = Date.now() / 1000): bo
   return exp - EXPIRY_MARGIN_SECONDS > nowSeconds;
 }
 
-export function resolvePassword(env: NodeJS.ProcessEnv = process.env, configCommand?: string): string {
-  const direct = env.TERMINUS_PASSWORD;
-  if (direct) return direct;
-
-  const command = env.TERMINUS_PASSWORD_COMMAND || configCommand;
-  if (!command) {
+export function resolvePassword(env: NodeJS.ProcessEnv = process.env): string {
+  const password = env.TERMINUS_PASSWORD;
+  if (!password) {
     throw new Error(
-      "No password source. Set TERMINUS_PASSWORD, or set TERMINUS_PASSWORD_COMMAND (or " +
-        "password_command in terminus-cli.json) to a command that prints the password.",
+      "No password. Set TERMINUS_PASSWORD, resolving it in your shell if it lives in a secret " +
+        "store, e.g. export TERMINUS_PASSWORD=$(your-secret-store read terminus/password)",
     );
   }
-
-  const result = spawnSync(command, {
-    shell: true,
-    encoding: "utf8",
-    timeout: PASSWORD_COMMAND_TIMEOUT_MS,
-  });
-  if (result.error) {
-    throw new Error(`Could not run the password command \`${command}\`: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`Password command \`${command}\` failed:\n${(result.stderr || "").trim()}`);
-  }
-  const password = result.stdout.replace(/\n$/, "");
-  if (!password) throw new Error(`Password command \`${command}\` printed nothing.`);
   return password;
 }
 

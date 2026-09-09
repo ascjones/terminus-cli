@@ -325,22 +325,16 @@ describe("token cache on disk", () => {
 });
 
 describe("resolvePassword", () => {
-  it("treats an empty TERMINUS_PASSWORD_COMMAND as unset so the config reference still applies", () => {
-    expect(() => resolvePassword({ TERMINUS_PASSWORD_COMMAND: "" })).toThrow(/No password source/);
+  it("returns TERMINUS_PASSWORD", () => {
+    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" })).toBe("literal");
   });
 
-  it("prefers the literal password when one is set, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal", TERMINUS_PASSWORD_COMMAND: "print-my-password" })).toBe("literal");
+  it("treats an empty TERMINUS_PASSWORD as unset", () => {
+    expect(() => resolvePassword({ TERMINUS_PASSWORD: "" })).toThrow(/No password/);
   });
 
-  it("prefers a literal password over any reference, without shelling out", () => {
-    expect(resolvePassword({ TERMINUS_PASSWORD: "literal" }, "print-my-password")).toBe("literal");
-  });
-
-  it("names every source when there is none", () => {
-    expect(() => resolvePassword({})).toThrow(
-      /TERMINUS_PASSWORD.*TERMINUS_PASSWORD_COMMAND.*password_command in terminus-cli\.json/s,
-    );
+  it("points at the shell when it is missing, since nothing else resolves it", () => {
+    expect(() => resolvePassword({})).toThrow(/TERMINUS_PASSWORD.*secret store/s);
   });
 });
 

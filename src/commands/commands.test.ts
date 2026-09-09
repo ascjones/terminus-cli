@@ -64,31 +64,18 @@ describe("config report", () => {
   const base = {
     url: "http://localhost:2300",
     email: "you@example.com",
-    passwordCommand: "print-my-password",
     screensDir: "/proj/screens",
     configFile: "/proj/terminus-cli.json",
-    sources: { url: "--url", email: "terminus-cli.json", password: "terminus-cli.json", screens: null },
+    sources: { url: "--url", email: "terminus-cli.json", password: null, screens: null },
   };
 
-  it("shows a reference, which is a pointer rather than a secret", () => {
-    expect(report(base).settings.password).toEqual({
-      value: "print-my-password",
-      source: "terminus-cli.json",
-    });
-  });
-
   it("never carries a literal password, only the name of where it came from", () => {
-    const literal = report({
-      ...base,
-      passwordCommand: undefined,
-      sources: { ...base.sources, password: "TERMINUS_PASSWORD" },
-    });
+    const literal = report({ ...base, sources: { ...base.sources, password: "TERMINUS_PASSWORD" } });
     expect(literal.settings.password).toEqual({ value: null, source: "TERMINUS_PASSWORD" });
-    expect(JSON.stringify(literal)).not.toContain("print-my-password");
   });
 
   it("distinguishes unset from set-but-hidden", () => {
-    const unset = report({ ...base, passwordCommand: undefined, sources: { ...base.sources, password: null } });
+    const unset = report({ ...base, sources: { ...base.sources, password: null } });
     expect(unset.settings.password).toEqual({ value: null, source: null });
   });
 });

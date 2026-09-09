@@ -142,18 +142,15 @@ beyond the password itself, and no refresh-token expiry to babysit. Cache the ac
 future; fall back to a fresh login. Skip the refresh-token flow entirely — it buys nothing over
 re-login and adds rotation state that goes stale if a run is interrupted.
 
-Credentials come from the environment. A command that fetches the password from a secret store is
-the preferred form, so nothing is stored in the clear and the password never sits in the
-environment:
+Credentials come from the environment. The CLI knows nothing about secret stores: it reads
+`TERMINUS_PASSWORD`, and resolving that from wherever the password actually lives is the shell's
+job, which keeps the CLI out of the business of executing commands from a config file.
 
 ```sh
 TERMINUS_URL=http://localhost:2300
 TERMINUS_EMAIL=you@example.com
-TERMINUS_PASSWORD_COMMAND='your-secret-store read terminus/password'
-# or TERMINUS_PASSWORD=... for CI, where the password is injected directly
+export TERMINUS_PASSWORD=$(your-secret-store read terminus/password)
 ```
-
-Any secret store with a CLI that prints the secret to stdout will do.
 
 ### Things that bite
 
