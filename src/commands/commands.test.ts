@@ -22,13 +22,10 @@ describe("redact", () => {
 });
 
 describe("screenUrl", () => {
-  it("joins the uri path to the server base", () => {
+  it("joins the uri path to the server base, and is null before a screen is rendered", () => {
     expect(screenUrl("http://localhost:2300/", { uri: "/uploads/a.png" } as Screen)).toBe(
       "http://localhost:2300/uploads/a.png",
     );
-  });
-
-  it("is null for a screen that has never been rendered", () => {
     expect(screenUrl("http://localhost:2300", {} as Screen)).toBeNull();
   });
 });
@@ -69,12 +66,10 @@ describe("config report", () => {
     sources: { url: "--url", email: "terminus-cli.json", password: null, screens: null },
   };
 
-  it("never carries a literal password, only the name of where it came from", () => {
+  it("names where the password came from without ever carrying it, and marks it unset when absent", () => {
     const literal = report({ ...base, sources: { ...base.sources, password: "TERMINUS_PASSWORD" } });
     expect(literal.settings.password).toEqual({ value: null, source: "TERMINUS_PASSWORD" });
-  });
 
-  it("distinguishes unset from set-but-hidden", () => {
     const unset = report({ ...base, sources: { ...base.sources, password: null } });
     expect(unset.settings.password).toEqual({ value: null, source: null });
   });

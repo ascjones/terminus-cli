@@ -57,7 +57,7 @@ export function parseConfig(text: string, file: string): Config {
     file,
     url: body.url as string | undefined,
     email: body.email as string | undefined,
-      screensDir: screens === undefined ? undefined : resolve(dirname(file), screens),
+    screensDir: screens === undefined ? undefined : resolve(dirname(file), screens),
   };
 }
 

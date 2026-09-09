@@ -32,26 +32,23 @@ afterEach(() => {
 });
 
 describe("parseConfig", () => {
-  it("resolves a screens path against the config file, not the working directory", () => {
-    const config = parseConfig('{"screens": "screens"}', "/home/me/project/terminus-cli.json");
-    expect(config.screensDir).toBe("/home/me/project/screens");
-  });
-
-  it("leaves an absolute screens path alone", () => {
-    const config = parseConfig('{"screens": "/srv/screens"}', "/home/me/terminus-cli.json");
-    expect(config.screensDir).toBe("/srv/screens");
-  });
-
-  it("reads the remaining keys", () => {
+  it("reads every key, resolving screens against the config file not the working directory", () => {
     const config = parseConfig(
-      '{"url":"http://localhost:2300","email":"a@example.com"}',
-      "/x/terminus-cli.json",
+      '{"url":"http://localhost:2300","email":"a@example.com","screens":"screens"}',
+      "/home/me/project/terminus-cli.json",
     );
     expect(config).toMatchObject({
       url: "http://localhost:2300",
       email: "a@example.com",
-      screensDir: undefined,
+      screensDir: "/home/me/project/screens",
     });
+  });
+
+  it("leaves an absolute screens path alone, and leaves screens unset when absent", () => {
+    expect(parseConfig('{"screens": "/srv/screens"}', "/home/me/terminus-cli.json").screensDir).toBe(
+      "/srv/screens",
+    );
+    expect(parseConfig('{"url": "http://x:2300"}', "/home/me/terminus-cli.json").screensDir).toBeUndefined();
   });
 
   it("refuses a literal password, since the file gets committed", () => {
@@ -60,11 +57,8 @@ describe("parseConfig", () => {
     );
   });
 
-  it("rejects a mistyped key instead of silently ignoring it", () => {
+  it("rejects a mistyped key and a non-string value, instead of silently ignoring either", () => {
     expect(() => parseConfig('{"screen":"screens"}', "/x/terminus-cli.json")).toThrow(/unknown key screen/);
-  });
-
-  it("rejects values that are not non-empty strings", () => {
     expect(() => parseConfig('{"url": 2300}', "/x/terminus-cli.json")).toThrow(/"url" must be a non-empty string/);
     expect(() => parseConfig('{"url": ""}', "/x/terminus-cli.json")).toThrow(/"url" must be a non-empty string/);
   });
@@ -93,13 +87,10 @@ describe("findConfigFile", () => {
 });
 
 describe("loadConfig", () => {
-  it("returns the empty config when there is no file", () => {
-    expect(loadConfig(join(project({ "empty/.keep": "" }), "empty"))).toEqual(EMPTY_CONFIG);
-  });
-
-  it("resolves a screens path relative to the file it found while walking up", () => {
+  it("resolves a screens path against the file it walked up to, or reports no file at all", () => {
     const root = project({ [CONFIG_FILENAME]: '{"screens":"screens"}', "sub/deep/.keep": "" });
     expect(loadConfig(join(root, "sub", "deep")).screensDir).toBe(join(root, "screens"));
+    expect(loadConfig(join(project({ "empty/.keep": "" }), "empty"))).toEqual(EMPTY_CONFIG);
   });
 });
 
@@ -162,7 +153,6 @@ describe("resolveSettings sources", () => {
     file: "/proj/terminus-cli.json",
     url: "http://config:2300",
     email: undefined,
-    passwordCommand: "print-my-password",
     screensDir: "/proj/screens",
   };
   const noFlags = { url: undefined, email: undefined, screens: undefined };
@@ -180,6 +170,10 @@ describe("resolveSettings sources", () => {
       password: null,
       screens: "--screens",
     });
+
+    const withPassword = { TERMINUS_PASSWORD: "literal" };
+    expect(resolveSettings(noFlags, withPassword, config, "/cwd").sources.password).toBe("TERMINUS_PASSWORD");
+    expect(resolvePassword(withPassword)).toBe("literal");
   });
 
   it("treats an empty environment variable as unset", () => {
@@ -190,9 +184,4 @@ describe("resolveSettings sources", () => {
     expect(settings.sources.password).toBeNull();
   });
 
-  it("reports TERMINUS_PASSWORD as the only password source there is", () => {
-    const env = { TERMINUS_PASSWORD: "literal" };
-    expect(resolveSettings(noFlags, env, config, "/cwd").sources.password).toBe("TERMINUS_PASSWORD");
-    expect(resolvePassword(env)).toBe("literal");
-  });
 });

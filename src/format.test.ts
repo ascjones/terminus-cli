@@ -2,19 +2,17 @@ import { describe, expect, it } from "vitest";
 import { bytes, orDash, shortTime, table } from "./format.ts";
 
 describe("table", () => {
-  it("pads every column to its widest cell and does not pad the last one", () => {
+  it("pads each column to its widest cell or its header, and never the last one", () => {
     const rendered = table(
-      ["ID", "NAME"],
+      ["ID", "LABEL", "NAME"],
       [
-        ["1", "welcome"],
-        ["10", "extension-weather"],
+        ["1", "x", "welcome"],
+        ["10", "yy", "extension-weather"],
       ],
     );
-    expect(rendered).toBe(["ID  NAME", "1   welcome", "10  extension-weather"].join("\n"));
-  });
-
-  it("widens a column to fit its header", () => {
-    expect(table(["LABEL"], [["x"]])).toBe("LABEL\nx");
+    expect(rendered).toBe(
+      ["ID  LABEL  NAME", "1   x      welcome", "10  yy     extension-weather"].join("\n"),
+    );
   });
 
   it("renders the empty note instead of a bare header row", () => {
