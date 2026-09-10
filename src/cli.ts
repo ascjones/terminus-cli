@@ -2,6 +2,15 @@ import { TerminusClient, TerminusError, resolvePassword } from "./client.ts";
 import { CONFIG_FILENAME, loadConfig, resolveSettings } from "./config.ts";
 import { configCommand } from "./commands/config.ts";
 import { devices } from "./commands/devices.ts";
+import {
+  type ExtensionFlags,
+  extensionBuild,
+  extensionExchangeSet,
+  extensionExport,
+  extensionList,
+  extensionPush,
+  extensionShow,
+} from "./commands/extension.ts";
 import { playlistShow } from "./commands/playlist.ts";
 import { screens } from "./commands/screens.ts";
 
@@ -15,11 +24,21 @@ Commands
   screens                  list screens: size, bytes, updated_at and the URL of the rendered PNG
   playlist show [<id>]     playlist items in order, and which one is current
 
+  extension list                       id, name, label, kind
+  extension show <id|name>             build matrix, exchange URLs, data and errors
+  extension export <id|name>           download the zip (--out FILE)
+  extension exchange set <id|name>     --template URL [--headers JSON] [--verb get|post]
+                                       [--exchange <id>]; prints errors after the save
+  extension build <id|name> [--wait]   enqueue a build; --wait polls for the new screen
+  extension push <dir|zip> [--no-build]
+                                       update in place by name, keeping the build matrix,
+                                       or import it when the name is new
+
 Options
   --json                   machine-readable output (available on every command)
   --url <url>              server base URL
   --email <address>        account to log in as
-  --screens <dir>          directory holding <name>.liquid and <name>.configuration.yml
+  --screens <dir>          where extension push <name> looks for a source directory or zip
   --verbose                log each request's method, path and status to stderr
   -h, --help               this text
 
@@ -49,12 +68,19 @@ export interface ParsedArgs {
   url?: string;
   email?: string;
   screens?: string;
+  out?: string;
+  template?: string;
+  headers?: string;
+  verb?: string;
+  exchange?: string;
+  wait: boolean;
+  build: boolean;
 }
 
-const VALUE_FLAGS = new Set(["--url", "--email", "--screens"]);
+const VALUE_FLAGS = new Set(["--url", "--email", "--screens", "--out", "--template", "--headers", "--verb", "--exchange"]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { command: [], json: false, verbose: false, help: false };
+  const parsed: ParsedArgs = { command: [], json: false, verbose: false, help: false, wait: false, build: true };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
@@ -63,9 +89,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (value === undefined) throw new Error(`${arg} needs a value.`);
       if (arg === "--url") parsed.url = value;
       else if (arg === "--email") parsed.email = value;
-      else parsed.screens = value;
+      else if (arg === "--screens") parsed.screens = value;
+      else if (arg === "--out") parsed.out = value;
+      else if (arg === "--template") parsed.template = value;
+      else if (arg === "--headers") parsed.headers = value;
+      else if (arg === "--verb") parsed.verb = value;
+      else parsed.exchange = value;
       index += 1;
     } else if (arg === "--json") parsed.json = true;
+    else if (arg === "--wait") parsed.wait = true;
+    else if (arg === "--no-build") parsed.build = false;
     else if (arg === "--verbose") parsed.verbose = true;
     else if (arg === "-h" || arg === "--help") parsed.help = true;
     else if (arg.startsWith("-")) throw new Error(`Unknown option ${arg}. Try --help.`);
@@ -79,6 +112,11 @@ export function optionalId(value: string | undefined, what: string): number | nu
   if (value === undefined) return null;
   if (!/^\d+$/.test(value)) throw new Error(`Expected a numeric ${what}, got "${value}".`);
   return Number(value);
+}
+
+export function requireArg(value: string | undefined, usage: string): string {
+  if (value === undefined) throw new Error(`Usage: terminus ${usage}`);
+  return value;
 }
 
 export async function run(argv: string[]): Promise<number> {
@@ -131,6 +169,55 @@ export async function run(argv: string[]): Promise<number> {
       }
       await playlistShow(client, optionalId(playlistArgs[0], "playlist id"), args.json);
       return 0;
+    }
+    case "extension": {
+      const flags: ExtensionFlags = {
+        out: args.out,
+        template: args.template,
+        headers: args.headers,
+        verb: args.verb,
+        exchange: args.exchange,
+        wait: args.wait,
+        build: args.build,
+        screensDir: settings.screensDir,
+      };
+      const [subcommand, ...extensionArgs] = rest;
+      switch (subcommand) {
+        case "list":
+          await extensionList(client, args.json);
+          return 0;
+        case "show":
+          await extensionShow(client, requireArg(extensionArgs[0], "extension show <id|name>"), args.json);
+          return 0;
+        case "export":
+          await extensionExport(
+            client,
+            requireArg(extensionArgs[0], "extension export <id|name>"),
+            args.out,
+            args.json,
+          );
+          return 0;
+        case "build":
+          await extensionBuild(client, requireArg(extensionArgs[0], "extension build <id|name>"), flags, args.json);
+          return 0;
+        case "push":
+          await extensionPush(client, requireArg(extensionArgs[0], "extension push <dir|zip>"), flags, args.json);
+          return 0;
+        case "exchange": {
+          if (extensionArgs[0] !== "set") {
+            throw new Error(`Unknown exchange subcommand "${extensionArgs[0] ?? ""}". Only \`set\` exists.`);
+          }
+          await extensionExchangeSet(
+            client,
+            requireArg(extensionArgs[1], "extension exchange set <id|name>"),
+            flags,
+            args.json,
+          );
+          return 0;
+        }
+        default:
+          throw new Error(`Unknown extension subcommand "${subcommand ?? ""}". Try --help.`);
+      }
     }
     default:
       throw new Error(`Unknown command "${command}". Try --help.`);
