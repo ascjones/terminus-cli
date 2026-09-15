@@ -27,10 +27,11 @@ Commands
   extension list                       id, name, label, kind
   extension show <id|name>             build matrix, exchange URLs, data and errors
   extension export <id|name>           download the zip (--out FILE)
-  extension exchange set <id|name>     --template URL [--headers JSON] [--verb get|post]
-                                       [--exchange <id>]; prints errors after the save
+  extension exchange set <id|name>     --template URL [--headers JSON|-|@FILE] [--verb get|post]
+                                       [--exchange <id>]; prints errors after the save.
+                                       --headers - reads JSON from stdin, keeping secrets off argv
   extension build <id|name> [--wait]   enqueue a build; --wait polls for the new screen
-  extension push <dir|zip> [--no-build]
+  extension push <dir|zip|name> [--no-build]
                                        update in place by name, keeping the build matrix,
                                        or import it when the name is new
 

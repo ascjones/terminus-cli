@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { unzipSync } from "fflate";
 import { parse as parseYaml } from "yaml";
-import type { TerminusClient, FormFields } from "./client.ts";
+import { TerminusError, type TerminusClient, type FormFields } from "./client.ts";
 
 export const REDACTED = "[redacted]";
 
@@ -26,6 +27,7 @@ export interface ExchangeState {
   body: string;
   errors: Record<string, unknown>;
   has_data: boolean;
+  data_digest: string;
 }
 
 export interface Configuration {
@@ -48,6 +50,7 @@ export interface Configuration {
 
 export interface ExtensionSource {
   configuration: Configuration;
+  configurationText: string;
   template: string;
 }
 
@@ -69,11 +72,20 @@ export function parseExtensionIndex(html: string): ExtensionCard[] {
   return cards;
 }
 
+function scrapeError(what: string): Error {
+  return new Error(
+    `Could not read ${what}. The markup this CLI scrapes may have changed, so nothing was written.`,
+  );
+}
+
 export function parseBuildMatrix(html: string): BuildMatrix {
   const selected = (field: string): string[] => {
-    const block = new RegExp(`name="extension\\[${field}\\]\\[\\]"([\\s\\S]*?)</select>`).exec(html);
-    if (!block) return [];
-    return [...(block[1] ?? "").matchAll(/<option value="(\d+)" selected="selected"/g)].map((m) => m[1] ?? "");
+    const block = new RegExp(`<select[^>]*name="extension\\[${field}\\]\\[\\]"[^>]*>([\\s\\S]*?)</select>`).exec(html);
+    if (!block) throw scrapeError(`the ${field} build matrix from the extension edit page`);
+    return [...(block[1] ?? "").matchAll(/<option\b([^>]*)>/g)]
+      .filter((option) => /(?:^|\s)selected(?:[\s=]|$)/.test(option[1] ?? ""))
+      .map((option) => /\bvalue="([^"]*)"/.exec(option[1] ?? "")?.[1])
+      .filter((value): value is string => value !== undefined);
   };
   return { device_ids: selected("device_ids"), model_ids: selected("model_ids") };
 }
@@ -83,9 +95,15 @@ export function parseExchangeIds(html: string, extensionId: number): number[] {
   return [...new Set([...html.matchAll(pattern)].map((m) => Number(m[1])))];
 }
 
-function textarea(html: string, selector: string): string {
+function textarea(html: string, selector: string): string | undefined {
   const match = new RegExp(`<textarea[^>]*${selector}[^>]*>\\n?([\\s\\S]*?)</textarea>`).exec(html);
-  return decodeEntities(match?.[1] ?? "").trim();
+  return match ? decodeEntities(match[1] ?? "").trim() : undefined;
+}
+
+function requireTextarea(html: string, selector: string, what: string): string {
+  const value = textarea(html, selector);
+  if (value === undefined) throw scrapeError(what);
+  return value;
 }
 
 function decodeEntities(text: string): string {
@@ -109,25 +127,38 @@ function parseJsonObject(text: string): Record<string, unknown> {
   }
 }
 
+function parseHeaders(text: string): Record<string, unknown> {
+  if (!text) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw scrapeError("the exchange headers");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw scrapeError("the exchange headers");
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function parseExchangeForm(html: string, id: number): ExchangeState {
-  const data = textarea(html, 'id="exchange_data"');
+  const data = textarea(html, 'id="exchange_data"') ?? "";
+  const verb = /x-data="\{\s*verb:\s*'(get|post)'\s*\}"/.exec(html)?.[1];
+  if (!verb) throw scrapeError("the exchange verb");
   return {
     id,
-    template: textarea(html, 'name="exchange\\[template\\]"'),
-    verb: /name="exchange\[verb\]"[^>]*value="([^"]*)"[^>]*checked/.exec(html)?.[1] ?? "get",
-    headers: parseJsonObject(textarea(html, 'name="exchange\\[headers\\]"')),
-    body: textarea(html, 'name="exchange\\[body\\]"'),
-    errors: parseJsonObject(textarea(html, 'id="exchange_errors"')),
+    template: requireTextarea(html, 'name="exchange\\[template\\]"', "the exchange URL"),
+    verb,
+    headers: parseHeaders(requireTextarea(html, 'name="exchange\\[headers\\]"', "the exchange headers")),
+    body: requireTextarea(html, 'name="exchange\\[body\\]"', "the exchange body"),
+    errors: parseJsonObject(textarea(html, 'id="exchange_errors"') ?? ""),
     has_data: data !== "" && data !== "{}",
+    data_digest: createHash("sha256").update(data).digest("hex").slice(0, 16),
   };
 }
 
 export function redactHeaders(headers: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    out[key] = /^(authorization|cookie|x-api-key|api-key|token)$/i.test(key) ? REDACTED : value;
-  }
-  return out;
+  return Object.fromEntries(Object.keys(headers).map((key) => [key, REDACTED]));
 }
 
 function requireString(value: unknown, field: string, where: string): string {
@@ -140,6 +171,16 @@ function requireString(value: unknown, field: string, where: string): string {
 function optionalScalar(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function optionalJson(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function optionalTags(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return Array.isArray(value) ? value.map(String).join(",") : String(value);
 }
 
 export function parseConfiguration(text: string, where: string): Configuration {
@@ -161,10 +202,10 @@ export function parseConfiguration(text: string, where: string): Configuration {
     description: typeof body.description === "string" ? body.description : "",
     kind: requireString(body.kind, "kind", where),
     mode: optionalScalar(body.mode),
-    tags: optionalScalar(body.tags),
-    static_body: optionalScalar(body.static_body),
-    fields: optionalScalar(body.fields),
-    data: optionalScalar(body.data),
+    tags: optionalTags(body.tags),
+    static_body: optionalJson(body.static_body),
+    fields: optionalJson(body.fields),
+    data: optionalJson(body.data),
     interval: optionalScalar(body.interval),
     unit: optionalScalar(body.unit),
     days: Array.isArray(body.days) ? body.days.map(String) : [],
@@ -203,7 +244,9 @@ export function readExtensionSource(path: string): ExtensionSource {
     const entries = unzipSync(new Uint8Array(readFileSync(path)));
     const decoder = new TextDecoder();
     const pick = (suffix: string): string | undefined => {
-      const key = Object.keys(entries).find((name) => name.endsWith(suffix));
+      const key = Object.keys(entries).find(
+        (name) => basename(name) === suffix && !name.split("/").includes("__MACOSX"),
+      );
       const bytes = key === undefined ? undefined : entries[key];
       return bytes === undefined ? undefined : decoder.decode(bytes);
     };
@@ -212,13 +255,19 @@ export function readExtensionSource(path: string): ExtensionSource {
     if (configuration === undefined || template === undefined) {
       throw new Error(`${basename(path)}: expected configuration.yml and template.html.liquid inside the zip.`);
     }
-    return { configuration: parseConfiguration(configuration, `${basename(path)}/configuration.yml`), template };
+    return {
+      configuration: parseConfiguration(configuration, `${basename(path)}/configuration.yml`),
+      configurationText: configuration,
+      template,
+    };
   }
 
   const configurationPath = join(path, "configuration.yml");
   const templatePath = join(path, "template.html.liquid");
+  const configurationText = readFileSync(configurationPath, "utf8");
   return {
-    configuration: parseConfiguration(readFileSync(configurationPath, "utf8"), configurationPath),
+    configuration: parseConfiguration(configurationText, configurationPath),
+    configurationText,
     template: readFileSync(templatePath, "utf8"),
   };
 }
@@ -244,6 +293,43 @@ export function extensionFields(source: ExtensionSource, matrix: BuildMatrix): F
   if (source.configuration.unit !== null) fields["extension[unit]"] = source.configuration.unit;
   if (source.configuration.days.length > 0) fields["extension[days][]"] = source.configuration.days;
   return fields;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function sameHeaders(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  return stableJson(a) === stableJson(b);
+}
+
+export function bodyText(body: unknown): string {
+  if (body === null || body === undefined) return "";
+  return typeof body === "object" ? JSON.stringify(body) : String(body);
+}
+
+export function exchangeFields(
+  template: string,
+  verb: string,
+  headers: Record<string, unknown>,
+  body: string,
+): FormFields {
+  return {
+    "exchange[template]": template,
+    "exchange[verb]": verb,
+    "exchange[headers]": Object.keys(headers).length > 0 ? JSON.stringify(headers) : "",
+    "exchange[body]": body,
+  };
+}
+
+export function sameMatrix(a: BuildMatrix, b: BuildMatrix): boolean {
+  const key = (ids: string[]): string => [...ids].sort().join(",");
+  return key(a.device_ids) === key(b.device_ids) && key(a.model_ids) === key(b.model_ids);
 }
 
 export async function listExtensions(client: TerminusClient): Promise<ExtensionCard[]> {
@@ -281,7 +367,7 @@ export async function exportExtension(client: TerminusClient, extensionId: numbe
     redirect: "manual",
   });
   if (!response.ok) {
-    throw new Error(`GET /extensions/${extensionId}/export -> HTTP ${response.status}`);
+    throw new TerminusError("GET", `/extensions/${extensionId}/export`, response.status, await response.text());
   }
   return new Uint8Array(await response.arrayBuffer());
 }

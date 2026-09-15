@@ -19,8 +19,8 @@ playlist show [<id>]     items in order, and which one is current
 extension list                      id, name, label, kind
 extension show <id|name>            build matrix, exchange URLs, data and errors
 extension export <id|name>          download the zip (--out FILE)
-extension exchange set <id|name>    --template URL [--headers JSON] [--verb get|post]
-extension build <id|name> [--wait]  enqueue a build; --wait polls for the new screen
+extension exchange set <id|name>    --template URL [--headers JSON|-|@FILE] [--verb get|post]
+extension build <id|name> [--wait]  enqueue a build; --wait polls until the screen changes
 extension push <dir|zip|name>       update in place by name, or import when it is new
 ```
 
@@ -34,6 +34,13 @@ afterwards unless you pass `--no-build`.
 `extension exchange set` doubles as an endpoint check: Terminus refreshes an exchange the moment it
 is saved, so the command waits for that and prints whether data came back, and the status and body
 of any error.
+
+Pass credential headers on stdin rather than argv, so they stay out of shell history and `ps`:
+
+```sh
+echo "{\"Authorization\": \"Bearer $(your-secret-store read rota/token)\"}" \
+  | npm run terminus -- extension exchange set weather --headers -
+```
 
 All take `--json`, plus `--url`, `--email`, `--screens` and `--verbose`.
 

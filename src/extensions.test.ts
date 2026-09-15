@@ -42,8 +42,10 @@ const EXCHANGE_EDIT = `
 <form action="/extensions/1/exchanges/1" method="POST">
 <textarea name="exchange[headers]">
 {"Authorization": "Bearer secret-value"}</textarea>
-<input type="radio" name="exchange[verb]" value="get" checked="checked">
-<input type="radio" name="exchange[verb]" value="post">
+<div class="bit-toggle-field" x-data="{verb: 'post'}">
+<input type="radio" name="exchange[verb]" value="get" x-model="verb">
+<input type="radio" name="exchange[verb]" value="post" x-model="verb">
+</div>
 <textarea name="exchange[template]">
 http://rota:3300/api/week</textarea>
 <textarea name="exchange[body]">
@@ -96,9 +98,14 @@ describe("parseExtensionIndex", () => {
 });
 
 describe("parseBuildMatrix", () => {
-  it("reads only the selected options, per select", () => {
+  it("reads only the selected options, per select, whatever the attribute order", () => {
     expect(parseBuildMatrix(EDIT)).toEqual({ device_ids: ["2"], model_ids: [] });
-    expect(parseBuildMatrix("")).toEqual({ device_ids: [], model_ids: [] });
+    const reordered = EDIT.replace('<option value="2" selected="selected">', '<option selected value="2">');
+    expect(parseBuildMatrix(reordered)).toEqual({ device_ids: ["2"], model_ids: [] });
+  });
+
+  it("throws rather than reporting an empty matrix that push would write back", () => {
+    expect(() => parseBuildMatrix("")).toThrow(/device_ids build matrix.*nothing was written/);
   });
 });
 
@@ -115,20 +122,27 @@ describe("parseExchangeForm", () => {
   it("reads the URL, verb, headers and errors, and tells data apart from errors", () => {
     const exchange = parseExchangeForm(EXCHANGE_EDIT, 1);
     expect(exchange.template).toBe("http://rota:3300/api/week");
-    expect(exchange.verb).toBe("get");
+    expect(exchange.verb).toBe("post");
     expect(exchange.headers).toEqual({ Authorization: "Bearer secret-value" });
     expect(exchange.has_data).toBe(true);
     // Both read-only textareas are named exchange[data]; only the second holds errors.
     expect(exchange.errors).toEqual({ source_1: { uri: "http://rota:3300/api/week", code: 401 } });
   });
+
+  it("throws on unreadable headers or a missing verb, since exchange set writes both back", () => {
+    const badHeaders = EXCHANGE_EDIT.replace('{"Authorization": "Bearer secret-value"}', "{not json");
+    expect(() => parseExchangeForm(badHeaders, 1)).toThrow(/exchange headers/);
+    const noVerb = EXCHANGE_EDIT.replace(`x-data="{verb: 'post'}"`, "");
+    expect(() => parseExchangeForm(noVerb, 1)).toThrow(/exchange verb/);
+  });
 });
 
 describe("redactHeaders", () => {
-  it("hides credential headers and keeps the rest", () => {
-    expect(redactHeaders({ Authorization: "Bearer x", "X-Api-Key": "k", Accept: "application/json" })).toEqual({
+  it("hides every header value, since no name list catches every credential header", () => {
+    expect(redactHeaders({ Authorization: "Bearer x", "X-Auth-Token": "t", Accept: "application/json" })).toEqual({
       Authorization: "[redacted]",
-      "X-Api-Key": "[redacted]",
-      Accept: "application/json",
+      "X-Auth-Token": "[redacted]",
+      Accept: "[redacted]",
     });
   });
 });
@@ -143,6 +157,16 @@ describe("parseConfiguration", () => {
     expect(configuration.exchanges).toEqual([
       { template: "http://rota:3300/api/week", verb: "get", headers: { Authorization: "Bearer secret-value" }, body: null },
     ]);
+  });
+
+  it("JSON-encodes structured values instead of stringifying them", () => {
+    const structured = CONFIGURATION.replace("fields:\n", 'fields:\n  - keyname: city\n').replace(
+      "tags: []",
+      "tags: [family, rota]",
+    );
+    const configuration = parseConfiguration(structured, "c.yml");
+    expect(configuration.fields).toBe('[{"keyname":"city"}]');
+    expect(configuration.tags).toBe("family,rota");
   });
 
   it("names the file when a required field is missing or the YAML is not a mapping", () => {
@@ -169,19 +193,27 @@ describe("readExtensionSource", () => {
     const fromDirectory = readExtensionSource(root);
     const fromZip = readExtensionSource(zipPath);
     expect(fromZip.configuration).toEqual(fromDirectory.configuration);
+    expect(fromZip.configurationText).toBe(CONFIGURATION);
     expect(fromZip.template).toBe("<div>hi</div>");
   });
 
   it("says what a zip is missing rather than failing obscurely", () => {
     const root = mkdtempSync(join(tmpdir(), "terminus-cli-src-"));
     const zipPath = join(root, "bad.zip");
-    writeFileSync(zipPath, zipSync({ "readme.txt": new TextEncoder().encode("nope") }));
+    writeFileSync(
+      zipPath,
+      zipSync({ "__MACOSX/._configuration.yml": new TextEncoder().encode("junk"), "readme.txt": new TextEncoder().encode("nope") }),
+    );
     expect(() => readExtensionSource(zipPath)).toThrow(/expected configuration\.yml and template\.html\.liquid/);
   });
 });
 
 describe("extensionFields", () => {
-  const source = { configuration: parseConfiguration(CONFIGURATION, "c.yml"), template: "<div>hi</div>" };
+  const source = {
+    configuration: parseConfiguration(CONFIGURATION, "c.yml"),
+    configurationText: CONFIGURATION,
+    template: "<div>hi</div>",
+  };
 
   it("always sends device_ids, because omitting it clears the build matrix", () => {
     const fields = extensionFields(source, { device_ids: ["2"], model_ids: [] });

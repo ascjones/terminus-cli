@@ -1,6 +1,6 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { zipSync } from "fflate";
-import { extractCsrfToken, type TerminusClient } from "../client.ts";
+import { extractCsrfToken, TerminusError, type TerminusClient } from "../client.ts";
 import { orDash, print, table } from "../format.ts";
 import type { Envelope, Screen } from "../types.ts";
 import {
@@ -8,6 +8,8 @@ import {
   type ExchangeState,
   type ExtensionCard,
   type ExtensionSource,
+  bodyText,
+  exchangeFields,
   exportExtension,
   extensionFields,
   listExtensions,
@@ -17,6 +19,8 @@ import {
   resolveSourcePath,
   redactHeaders,
   resolveExtension,
+  sameHeaders,
+  sameMatrix,
 } from "../extensions.ts";
 
 const REFRESH_POLL_MS = 500;
@@ -131,60 +135,69 @@ export async function extensionExchangeSet(
     );
   }
 
-  let headers = current.headers;
-  if (flags.headers !== undefined) {
-    try {
-      headers = JSON.parse(flags.headers) as Record<string, unknown>;
-    } catch (error) {
-      throw new Error(`--headers must be a JSON object: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  const headers = flags.headers === undefined ? current.headers : parseHeadersFlag(flags.headers);
+  if (flags.verb !== undefined && flags.verb !== "get" && flags.verb !== "post") {
+    throw new Error(`--verb must be get or post, not "${flags.verb}".`);
   }
+  const sent = { template: flags.template ?? current.template, verb: flags.verb ?? current.verb };
 
   const path = `/extensions/${card.id}/exchanges/${current.id}`;
-  await client.form(
-    "PUT",
-    path,
-    {
-      "exchange[template]": flags.template ?? current.template,
-      "exchange[verb]": flags.verb ?? current.verb,
-      "exchange[headers]": Object.keys(headers).length > 0 ? JSON.stringify(headers) : "",
-      "exchange[body]": current.body,
-    },
-    { csrfFrom: `${path}/edit` },
-  );
+  await client.form("PUT", path, exchangeFields(sent.template, sent.verb, headers, current.body), {
+    csrfFrom: `${path}/edit`,
+  });
 
-  const after = await awaitRefresh(client, card.id, current);
+  const { exchange: after, refreshed } = await awaitRefresh(client, card.id, current, sent);
   const result = {
     extension: card.name,
     exchange: current.id,
     template: after?.template ?? "",
     verb: after?.verb ?? "",
     headers: redactHeaders(after?.headers ?? {}),
+    refreshed,
     has_data: after?.has_data ?? false,
     errors: after?.errors ?? {},
   };
   print(result, asJson, () =>
     `${card.name} exchange ${current.id} -> ${result.template} (${result.verb})\n` +
+      (refreshed
+        ? ""
+        : `refresh: not observed within ${REFRESH_TIMEOUT_MS / 1000}s, so the data and errors below may predate this save\n`) +
       `data: ${result.has_data ? "populated" : "empty"}\n${exchangeErrorLines(after ?? current)}`,
   );
 }
 
-function refreshFingerprint(exchange: ExchangeState): string {
-  return `${exchange.template}|${exchange.verb}|${exchange.has_data}|${JSON.stringify(exchange.errors)}`;
+export function parseHeadersFlag(value: string): Record<string, unknown> {
+  const text = value === "-" ? readFileSync(0, "utf8") : value.startsWith("@") ? readFileSync(value.slice(1), "utf8") : value;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`--headers must be a JSON object: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("--headers must be a JSON object, such as {\"Authorization\": \"Bearer ...\"}.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function refreshProducts(exchange: ExchangeState): string {
+  return `${exchange.data_digest}|${JSON.stringify(exchange.errors)}`;
 }
 
 async function awaitRefresh(
   client: TerminusClient,
   extensionId: number,
   before: ExchangeState,
-): Promise<ExchangeState | undefined> {
-  const was = refreshFingerprint(before);
+  sent: { template: string; verb: string },
+): Promise<{ exchange: ExchangeState | undefined; refreshed: boolean }> {
+  const was = refreshProducts(before);
   const deadline = Date.now() + REFRESH_TIMEOUT_MS;
   let latest: ExchangeState | undefined;
   for (;;) {
     latest = (await readExchanges(client, extensionId)).find((exchange) => exchange.id === before.id);
-    if (latest && refreshFingerprint(latest) !== was) return latest;
-    if (Date.now() > deadline) return latest;
+    const saved = latest !== undefined && latest.template === sent.template && latest.verb === sent.verb;
+    if (saved && refreshProducts(latest as ExchangeState) !== was) return { exchange: latest, refreshed: true };
+    if (Date.now() > deadline) return { exchange: latest, refreshed: false };
     await new Promise((resolve) => setTimeout(resolve, REFRESH_POLL_MS));
   }
 }
@@ -204,7 +217,8 @@ export async function extensionBuild(
   const matrix = await readBuildMatrix(client, card.id);
   if (matrix.device_ids.length === 0 && matrix.model_ids.length === 0) {
     throw new Error(
-      `Extension ${card.name} has an empty build matrix, so a build would render nothing. Attach a device or model first.`,
+      `Extension ${card.name} has an empty build matrix, so a build would render nothing. ` +
+        "Attach a device or model in the Terminus web UI; no CLI command sets the build matrix.",
     );
   }
   const before = await screenFor(client, card.name);
@@ -218,7 +232,7 @@ export async function extensionBuild(
       after = await screenFor(client, card.name);
       if (after && after.updated_at !== before?.updated_at) break;
       if (Date.now() > deadline) {
-        throw new Error(`Build of ${card.name} did not produce a new screen within ${BUILD_TIMEOUT_MS / 1000}s.`);
+        throw new Error(`Screen for ${card.name} did not change within ${BUILD_TIMEOUT_MS / 1000}s of enqueuing the build.`);
       }
     }
   }
@@ -231,7 +245,8 @@ export async function extensionBuild(
   };
   print(result, asJson, () =>
     flags.wait && after
-      ? `built ${card.name} -> screen ${after.id} ${after.name} ${orDash(after.size)} bytes at ${after.updated_at}`
+      ? `screen ${after.id} ${after.name} changed at ${after.updated_at} (${orDash(after.size)} bytes). ` +
+        "A scheduled rebuild can also change it, so this does not prove the enqueued build finished."
       : `build of ${card.name} enqueued`,
   );
 }
@@ -239,7 +254,7 @@ export async function extensionBuild(
 async function importExtension(client: TerminusClient, source: ExtensionSource): Promise<ExtensionCard> {
   const encoder = new TextEncoder();
   const zip = zipSync({
-    "configuration.yml": encoder.encode(toConfigurationYaml(source)),
+    "configuration.yml": encoder.encode(source.configurationText),
     "template.html.liquid": encoder.encode(source.template),
   });
 
@@ -257,50 +272,11 @@ async function importExtension(client: TerminusClient, source: ExtensionSource):
     redirect: "manual",
   });
   if (response.status >= 400) {
-    throw new Error(`POST /extensions/import -> HTTP ${response.status}\n${await response.text()}`);
+    throw new TerminusError("POST", "/extensions/import", response.status, await response.text());
   }
   const created = (await listExtensions(client)).find((card) => card.name === source.configuration.name);
   if (!created) throw new Error(`Import of ${source.configuration.name} reported success but no extension appeared.`);
   return created;
-}
-
-function toConfigurationYaml(source: ExtensionSource): string {
-  const configuration = source.configuration;
-  const scalar = (value: string | null): string => (value === null || value === "" ? "" : ` ${JSON.stringify(value)}`);
-  const exchanges = configuration.exchanges
-    .map((exchange) => {
-      const headers = Object.entries(exchange.headers)
-        .map(([key, value]) => `    ${key}: ${JSON.stringify(String(value))}`)
-        .join("\n");
-      return [
-        `- headers:${headers ? `\n${headers}` : " {}"}`,
-        `  verb: ${exchange.verb}`,
-        `  body:`,
-        `  template: ${JSON.stringify(exchange.template)}`,
-      ].join("\n");
-    })
-    .join("\n");
-
-  return [
-    "---",
-    "version: 0.72.0",
-    `name: ${configuration.name}`,
-    `label: ${JSON.stringify(configuration.label)}`,
-    `description: ${JSON.stringify(configuration.description)}`,
-    `mode:${scalar(configuration.mode)}`,
-    `kind: ${configuration.kind}`,
-    "tags: []",
-    `static_body:${scalar(configuration.static_body)}`,
-    `fields:${scalar(configuration.fields)}`,
-    `data:${scalar(configuration.data)}`,
-    `interval:${scalar(configuration.interval)}`,
-    `unit:${scalar(configuration.unit)}`,
-    "days: []",
-    `last_day_of_month: ${configuration.last_day_of_month}`,
-    `start_at: ${JSON.stringify(configuration.start_at)}`,
-    exchanges ? `exchanges:\n${exchanges}` : "exchanges: []",
-    "",
-  ].join("\n");
 }
 
 export async function extensionPush(
@@ -316,43 +292,50 @@ export async function extensionPush(
   if (!existing) {
     const created = await importExtension(client, source);
     print({ extension: name, id: created.id, created: true, built: false }, asJson, () =>
-      `created ${name} as extension ${created.id}. Its build matrix is empty, so nothing was built — ` +
-        `attach a device, then run: terminus extension build ${name}`,
+      `created ${name} as extension ${created.id}. Its build matrix is empty, so nothing was built. ` +
+        `Attach a device in the Terminus web UI, then run: terminus extension build ${name}`,
     );
     return;
   }
 
   const matrix = await readBuildMatrix(client, existing.id);
+  const exchanges = await readExchanges(client, existing.id);
+  if (exchanges.length !== source.configuration.exchanges.length) {
+    throw new Error(
+      `Push of ${name} aborted before writing: configuration.yml has ${source.configuration.exchanges.length} ` +
+        `exchange(s) but the server has ${exchanges.length}.`,
+    );
+  }
+
   await client.form("PUT", `/extensions/${existing.id}`, extensionFields(source, matrix), {
     csrfFrom: `/extensions/${existing.id}/edit`,
   });
 
   const after = await readBuildMatrix(client, existing.id);
-  if (after.device_ids.join(",") !== matrix.device_ids.join(",")) {
+  if (!sameMatrix(after, matrix)) {
     throw new Error(
-      `Build matrix changed during push of ${name}: was [${matrix.device_ids}], now [${after.device_ids}].`,
+      `Build matrix changed during push of ${name}: was devices [${matrix.device_ids}] models [${matrix.model_ids}], ` +
+        `now devices [${after.device_ids}] models [${after.model_ids}].`,
     );
   }
 
-  const exchanges = await readExchanges(client, existing.id);
   const updated: number[] = [];
   for (const [index, wanted] of source.configuration.exchanges.entries()) {
     const current = exchanges[index];
     if (!current || !wanted.template) continue;
-    if (current.template === wanted.template && current.verb === wanted.verb) continue;
+    const body = wanted.body === null || wanted.body === undefined ? current.body : bodyText(wanted.body);
+    if (
+      current.template === wanted.template &&
+      current.verb === wanted.verb &&
+      sameHeaders(current.headers, wanted.headers) &&
+      current.body === body
+    ) {
+      continue;
+    }
     const exchangePath = `/extensions/${existing.id}/exchanges/${current.id}`;
-    await client.form(
-      "PUT",
-      exchangePath,
-      {
-        "exchange[template]": wanted.template,
-        "exchange[verb]": wanted.verb,
-        "exchange[headers]":
-          Object.keys(wanted.headers).length > 0 ? JSON.stringify(wanted.headers) : "",
-        "exchange[body]": current.body,
-      },
-      { csrfFrom: `${exchangePath}/edit` },
-    );
+    await client.form("PUT", exchangePath, exchangeFields(wanted.template, wanted.verb, wanted.headers, body), {
+      csrfFrom: `${exchangePath}/edit`,
+    });
     updated.push(current.id);
   }
 
