@@ -9,16 +9,29 @@ describe("parseArgs", () => {
       json: true,
       verbose: true,
       help: false,
+      wait: false,
+      build: true,
     });
+  });
+
+  it("reads --wait and --no-build", () => {
+    expect(parseArgs(["extension", "build", "x", "--wait"]).wait).toBe(true);
+    expect(parseArgs(["extension", "push", "d"]).build).toBe(true);
+    expect(parseArgs(["extension", "push", "d", "--no-build"]).build).toBe(false);
   });
 
   it("reads the value flags", () => {
     const parsed = parseArgs([
       "devices", "--url", "http://other:2300", "--email", "b@example.com", "--screens", "../screens",
+      "--out", "e.zip", "--template", "http://x/api", "--headers", "{}", "--verb", "post", "--exchange", "3",
     ]);
     expect(parsed.url).toBe("http://other:2300");
     expect(parsed.email).toBe("b@example.com");
     expect(parsed.screens).toBe("../screens");
+    expect(parsed.out).toBe("e.zip");
+    expect(parsed.template).toBe("http://x/api");
+    expect(parsed.verb).toBe("post");
+    expect(parsed.exchange).toBe("3");
   });
 
   it("rejects a dangling value flag and an unknown option, rather than reading either as a command", () => {
